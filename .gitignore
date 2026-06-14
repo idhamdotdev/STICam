@@ -1,0 +1,42 @@
+# ── Android ────────────────────────────────────────────────────────
+*.iml
+.gradle/
+.idea/
+local.properties
+android/.gradle/
+android/build/
+android/app/build/
+android/captures/
+android/app/src/main/assets/
+
+# Generated APKs
+*.apk
+*.aab
+
+# ── Windows / .NET ─────────────────────────────────────────────────
+windows/SticamHost/bin/
+windows/SticamHost/obj/
+windows/SticamHost/publish/
+windows/SticamHost/publish-single/
+windows/SticamHost/publish.zip
+*.user
+.vs/
+
+# Tools bundled at build — do NOT commit binaries
+windows/SticamHost/tools/adb.exe
+windows/SticamHost/tools/AdbWinApi.dll
+windows/SticamHost/tools/AdbWinUsbApi.dll
+windows/SticamHost/tools/ffmpeg.exe
+
+# ── Media & Design ─────────────────────────────────────────────────
+# Ignore design mockups but keep logo icons
+sticam_media/design_*
+idhamdev-pallete.png
+
+# ── iOS (unused in this environment) ───────────────────────────────
+ios/
+
+# ── OS artifacts ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
