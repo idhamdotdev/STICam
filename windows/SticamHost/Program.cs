@@ -21,7 +21,7 @@ namespace SticamHost
         {
             try
             {
-                string tempDir = Path.Combine(Path.GetTempPath(), "SticamHost");
+                string tempDir = Path.Combine(Path.GetTempPath(), "STICamHost");
                 Directory.CreateDirectory(Path.Combine(tempDir, "tools"));
                 Directory.CreateDirectory(Path.Combine(tempDir, "fonts"));
 
@@ -50,7 +50,7 @@ namespace SticamHost
             }
             catch (Exception ex)
             {
-                MessageBox.Show($"Failed to initialize Sticam resources: {ex.Message}", "Initialization Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Failed to initialize STICam resources: {ex.Message}", "Initialization Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
@@ -62,7 +62,7 @@ namespace SticamHost
                 string clsidPath = @"Software\Classes\CLSID\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}";
                 using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(clsidPath))
                 {
-                    key.SetValue("", "Sticam Camera");
+                    key.SetValue("", "STICam Camera");
                 }
                 using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(clsidPath + @"\InprocServer32"))
                 {
@@ -74,7 +74,7 @@ namespace SticamHost
                 string instancePath = @"Software\Classes\CLSID\{860BB310-5D01-11d0-BD3B-00A0C911CE86}\Instance\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}";
                 using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(instancePath))
                 {
-                    key.SetValue("FriendlyName", "Sticam Camera");
+                    key.SetValue("FriendlyName", "STICam Camera");
                     key.SetValue("CLSID", "{A3FCE0F5-3493-419F-958A-ABA1250EC20B}");
 
                     // Standard FilterData for OBS Virtual Camera (DirectShow format)

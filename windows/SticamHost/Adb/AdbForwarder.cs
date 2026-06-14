@@ -132,7 +132,7 @@ namespace SticamHost.Adb
         private static string LocateAdb()
         {
             // 1. Temp folder extracted tools\adb.exe
-            string tempPath = Path.Combine(Path.GetTempPath(), "SticamHost", "tools", "adb.exe");
+            string tempPath = Path.Combine(Path.GetTempPath(), "STICamHost", "tools", "adb.exe");
             if (File.Exists(tempPath)) return tempPath;
 
             // 2. Bundled tools\adb.exe next to the exe

@@ -1,15 +1,15 @@
-# Sticam — Professional Android Webcam System
+# STICam — Professional Android Webcam System
 
-[![GitHub Stars](https://img.shields.io/github/stars/idhamdotdev/Sticam?style=for-the-badge&color=2A7AE2&logo=github)](https://github.com/idhamdotdev/Sticam/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/idhamdotdev/STICam?style=for-the-badge&color=2A7AE2&logo=github)](https://github.com/idhamdotdev/STICam/stargazers)
 [![GitHub Followers](https://img.shields.io/github/followers/idhamdotdev?style=for-the-badge&color=2A7AE2&logo=github)](https://github.com/idhamdotdev)
-[![License](https://img.shields.io/github/license/idhamdotdev/Sticam?style=for-the-badge&color=2A7AE2)](LICENSE)
+[![License](https://img.shields.io/github/license/idhamdotdev/STICam?style=for-the-badge&color=2A7AE2)](LICENSE)
 
 Transform your Android device into a professional-grade PC webcam with full manual
 Camera2 hardware control — ISO, shutter, focus, and white balance — over Wi-Fi or USB.
 
 <!-- 
 ### 📸 Screenshots
-![Sticam App Screenshot](sticam_media/design_after_connected_mobile.png) 
+![STICam App Screenshot](sticam_media/design_after_connected_mobile.png) 
 -->
 
 ---
@@ -25,7 +25,7 @@ This project is 100% free and open-source. If you wish to fork, modify, or recre
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  ANDROID (Sticam Node)                                          │
+│  ANDROID (STICam Node)                                          │
 │  Camera2 (AE_OFF, AF_OFF)                                       │
 │       ↓ zero-copy Surface pipeline                              │
 │  MediaCodec H.264 Encoder                                       │
@@ -34,12 +34,12 @@ This project is 100% free and open-source. If you wish to fork, modify, or recre
 └────────────────┬────────────────────────────────────────────────┘
                  │  Wi-Fi or USB (ADB forward)
 ┌────────────────▼────────────────────────────────────────────────┐
-│  WINDOWS (Sticam Host)                                          │
+│  WINDOWS (STICam Host)                                          │
 │  H264Receiver → VideoDecoder (FFmpeg.AutoGen)                   │
 │       ↓ Bitmap frames                                           │
 │  PictureBox preview  +  VirtualCameraManager                    │
 │       ↓                                                         │
-│  Sticam Camera (DirectShow) OR RTSP rtsp://127.0.0.1:8554/...  │
+│  STICam Camera (DirectShow) OR RTSP rtsp://127.0.0.1:8554/...  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,8 +48,8 @@ This project is 100% free and open-source. If you wish to fork, modify, or recre
 ## Project Layout
 
 ```
-Sticam/
-├── android/                    # Kotlin / Jetpack Compose app (Sticam Node)
+STICam/
+├── android/                    # Kotlin / Jetpack Compose app (STICam Node)
 │   ├── app/src/main/java/com/sticam/
 │   │   ├── engine/
 │   │   │   ├── CameraEngine.kt         # Camera2 → MediaCodec H.264 pipeline
@@ -66,7 +66,7 @@ Sticam/
 │   │   └── MainActivity.kt             # Entry point + permission handling
 │   └── ...
 │
-└── windows/SticamHost/                 # C# .NET 8 WinForms app (Sticam Host)
+└── windows/SticamHost/                 # C# .NET 8 WinForms app (STICam Host)
     ├── Adb/AdbForwarder.cs             # Automatic ADB port-forward polling
     ├── Stream/
     │   ├── H264Receiver.cs             # TCP client + typed-packet parser
@@ -76,7 +76,7 @@ Sticam/
     │   ├── VirtualCameraManager.cs     # OBS VirtualCam detection + fallback RTSP
     │   └── MfNative.cs                 # Win11 22H2 MF P/Invoke (future)
     ├── MainForm.cs                     # WinForms UI: preview + controls + log
-    └── SticamHost.csproj               # .NET 8 Windows target
+    └── STICamHost.csproj               # .NET 8 Windows target
 ```
 
 ---
@@ -115,7 +115,7 @@ Sticam/
 
 ### Local MP4 Recording
 
-- Tap the **⬤ REC** button in the HUD — records to `Movies/Sticam/` on device storage.
+- Tap the **⬤ REC** button in the HUD — records to `Movies/STICam/` on device storage.
 - No re-encoding: the same H.264 stream is muxed directly to MP4.
 - Requires `WRITE_EXTERNAL_STORAGE` on API < 29 (API 29+ uses scoped storage automatically).
 
@@ -153,12 +153,12 @@ windows/SticamHost/tools/
 cd "windows\SticamHost"
 dotnet restore
 dotnet build -c Release
-# Or open SticamHost.csproj in Visual Studio → F5
+# Or open STICamHost.csproj in Visual Studio → F5
 ```
 
 ### Connect
 
-1. Launch **SticamHost.exe**.
+1. Launch **STICamHost.exe**.
 2. **USB mode** — just click ▶ CONNECT. ADB forward runs automatically.
 3. **Wi-Fi mode** — select Wi-Fi, type the Android device IP, click ▶ CONNECT.
 4. The preview window shows the live H.264 feed once SPS/PPS are received.
@@ -167,7 +167,7 @@ dotnet build -c Release
 
 | Path | When Available | Usage |
 |------|---------------|-------|
-| **Sticam Camera** | Always (registered automatically on launch) | Appears as a real webcam in Zoom/Teams/Meet |
+| **STICam Camera** | Always (registered automatically on launch) | Appears as a real webcam in Zoom/Teams/Meet |
 | **RTSP stream** | Always (needs ffmpeg.exe) | Add as Media Source in OBS, or open in VLC |
 
 Click **▶ START VIRTUAL CAM** — the app auto-selects the best path.
@@ -221,7 +221,7 @@ so the hardware never overrides manual values.
 ## Troubleshooting
 
 ### Android — "No camera permission"
-- Go to Settings → Apps → Sticam → Permissions → Camera → Allow.
+- Go to Settings → Apps → STICam → Permissions → Camera → Allow.
 
 ### Android — Black preview but streaming works
 - Confirm the `TextureView` `SurfaceTexture` is valid before calling `engine.start()`.
@@ -236,7 +236,7 @@ so the hardware never overrides manual values.
 - Run `adb devices` in a terminal — the device should appear as `device` (not `unauthorized`).
 
 ### Windows — RTSP stream not available in OBS
-- Confirm `ffmpeg.exe` is in `tools/` next to `SticamHost.exe`.
+- Confirm `ffmpeg.exe` is in `tools/` next to `STICamHost.exe`.
 - ffmpeg log appears in the Host app's LOG pane.
 
 ### Windows — Build error: FFmpeg.AutoGen missing

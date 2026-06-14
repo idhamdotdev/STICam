@@ -140,7 +140,7 @@ namespace SticamHost
             {
                 Text =
                     "Please make sure that :\n" +
-                    "*Sticam app is running on your Android phone\n" +
+                    "*STICam app is running on your Android phone\n" +
                     "*For USB Mode : USB Debugging is enabled\n" +
                     "*For Wi-Fi mode: both devices on the same network",
                 ForeColor = TextWhite,
@@ -350,7 +350,7 @@ namespace SticamHost
 
         private void LoadLalezarFont()
         {
-            string fontPath = Path.Combine(Path.GetTempPath(), "SticamHost", "fonts", "Lalezar-Regular.ttf");
+            string fontPath = Path.Combine(Path.GetTempPath(), "STICamHost", "fonts", "Lalezar-Regular.ttf");
             if (!File.Exists(fontPath))
                 fontPath = Path.Combine(AppContext.BaseDirectory, "fonts", "Lalezar-Regular.ttf");
             if (!File.Exists(fontPath))

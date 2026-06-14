@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>SticamHost</AssemblyName>
+    <AssemblyName>STICamHost</AssemblyName>
     <RootNamespace>SticamHost</RootNamespace>
     <ApplicationIcon>assets\icon.ico</ApplicationIcon>
     <Platforms>x64</Platforms>

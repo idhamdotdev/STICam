@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "Sticam"
+rootProject.name = "STICam"
 include ':app'

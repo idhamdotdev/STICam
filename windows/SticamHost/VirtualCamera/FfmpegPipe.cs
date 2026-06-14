@@ -221,7 +221,7 @@ namespace SticamHost.VirtualCamera
         {
             // Common names registered by OBS VirtualCam:
             string[] candidates = {
-                "Sticam Camera",
+                "STICam Camera",
                 "OBS Virtual Camera",
                 "OBS-Camera",
                 "OBS-VirtualCam",
@@ -258,7 +258,7 @@ namespace SticamHost.VirtualCamera
         private static string LocateFfmpeg()
         {
             // 1. Temp folder extracted tools\ffmpeg.exe
-            string tempPath = Path.Combine(Path.GetTempPath(), "SticamHost", "tools", "ffmpeg.exe");
+            string tempPath = Path.Combine(Path.GetTempPath(), "STICamHost", "tools", "ffmpeg.exe");
             if (File.Exists(tempPath)) return tempPath;
 
             // 2. Bundled tools\ffmpeg.exe
