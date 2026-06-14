@@ -7,13 +7,13 @@ if (Test-Path $obsPath) {
     }
     
     $obsProps = Get-ItemProperty -Path $obsPath
-    Set-ItemProperty -Path $sticamPath -Name "FriendlyName" -Value "Sticam Camera"
+    Set-ItemProperty -Path $sticamPath -Name "FriendlyName" -Value "STICam Camera"
     Set-ItemProperty -Path $sticamPath -Name "CLSID" -Value $obsProps.CLSID
     
     if ($obsProps.FilterData) {
         Set-ItemProperty -Path $sticamPath -Name "FilterData" -Value $obsProps.FilterData -Type Binary
     }
-    Write-Host "SUCCESS! Standalone Sticam Camera registered."
+    Write-Host "SUCCESS! Standalone STICam Camera registered."
 } else {
     Write-Host "OBS Virtual Camera was not found. Please install OBS or register it first."
 }

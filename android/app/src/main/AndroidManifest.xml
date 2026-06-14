@@ -13,7 +13,7 @@
     <!-- Keep CPU/screen alive during streaming -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
-    <!-- MP4 recording to Movies/Sticam/ -->
+    <!-- MP4 recording to Movies/STICam/ -->
     <!-- API ≤28: needs WRITE_EXTERNAL_STORAGE for direct file writes       -->
     <!-- API 29+: no permission needed for Environment.DIRECTORY_MOVIES     -->
     <!-- API 33+: READ_MEDIA_VIDEO to read back saved clips                 -->
@@ -39,7 +39,7 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="Sticam"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Sticam"
         android:hardwareAccelerated="true">

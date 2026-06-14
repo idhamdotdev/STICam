@@ -79,7 +79,7 @@ namespace SticamHost.VirtualCamera
                 {
                     _running   = true;
                     ActiveMode = VirtualCameraMode.ObsVirtualCam;
-                    ModeDetail = "Standalone Sticam Camera Active";
+                    ModeDetail = "Standalone STICam Camera Active";
                     OnModeChanged?.Invoke(ModeDetail);
                     return ModeDetail;
                 }
