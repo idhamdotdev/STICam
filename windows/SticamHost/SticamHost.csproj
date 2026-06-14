@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>SticamHost</AssemblyName>
+    <RootNamespace>SticamHost</RootNamespace>
+    <ApplicationIcon>assets\icon.ico</ApplicationIcon>
+    <Platforms>x64</Platforms>
+    <Authors>idham.dev</Authors>
+    <Company>idham.dev</Company>
+    <Product>STICam</Product>
+    <Description>STICam Host Application for Windows</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- FFmpeg bindings + native DLLs for H.264 decoding -->
+    <PackageReference Include="Sdcb.FFmpeg"                        Version="6.0.0" />
+    <PackageReference Include="Sdcb.FFmpeg.runtime.windows-x64"   Version="6.0.0.20230302" />
+
+    <!-- System.Text.Json already in .NET 8 BCL — no extra ref needed -->
+  </ItemGroup>
+
+  <!-- Bundle adb.exe + ffmpeg.exe next to the output -->
+  <!-- Tool binaries (adb, ffmpeg) – copy only when they exist.
+       Place them in windows\SticamHost\tools\ before building.
+       Download: https://developer.android.com/tools/releases/platform-tools
+                 https://www.gyan.dev/ffmpeg/builds/ -->
+  <ItemGroup>
+    <EmbeddedResource Include="tools\adb.exe"         Condition="Exists('tools\adb.exe')" />
+    <EmbeddedResource Include="tools\AdbWinApi.dll"   Condition="Exists('tools\AdbWinApi.dll')" />
+    <EmbeddedResource Include="tools\AdbWinUsbApi.dll" Condition="Exists('tools\AdbWinUsbApi.dll')" />
+    <EmbeddedResource Include="tools\obs-virtualcam-module64.dll" Condition="Exists('tools\obs-virtualcam-module64.dll')" />
+    <EmbeddedResource Include="fonts\Lalezar-Regular.ttf" Condition="Exists('fonts\Lalezar-Regular.ttf')" />
+  </ItemGroup>
+
+</Project>
