@@ -39,7 +39,7 @@ This project is 100% free and open-source. If you wish to fork, modify, or recre
 │       ↓ Bitmap frames                                           │
 │  PictureBox preview  +  VirtualCameraManager                    │
 │       ↓                                                         │
-│  OBS VirtualCam (DirectShow) OR RTSP rtsp://127.0.0.1:8554/... │
+│  Sticam Camera (DirectShow) OR RTSP rtsp://127.0.0.1:8554/...  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -167,7 +167,7 @@ dotnet build -c Release
 
 | Path | When Available | Usage |
 |------|---------------|-------|
-| **OBS VirtualCam** | OBS Studio installed | Appears as real webcam in Zoom/Teams/Meet |
+| **Sticam Camera** | Always (registered automatically on launch) | Appears as a real webcam in Zoom/Teams/Meet |
 | **RTSP stream** | Always (needs ffmpeg.exe) | Add as Media Source in OBS, or open in VLC |
 
 Click **▶ START VIRTUAL CAM** — the app auto-selects the best path.
