@@ -9,6 +9,7 @@ import androidx.activity.viewModels
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import android.content.pm.ActivityInfo
 import com.sticam.ui.SticamScreen
 import com.sticam.ui.SticamViewModel
 import com.sticam.ui.theme.SticamTheme
@@ -31,6 +32,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // ── Start in landscape by default ─────────────────────────────────────
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+
+        // ── Provide activity reference to ViewModel for orientation toggling ──
+        vm.attachActivity(this)
 
         // ── Keep screen on during streaming ───────────────────────────────────
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)

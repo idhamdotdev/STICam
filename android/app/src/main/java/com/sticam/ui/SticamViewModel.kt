@@ -1,12 +1,15 @@
 package com.sticam.ui
 
+import android.app.Activity
 import android.app.Application
+import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.content.Context
 import android.util.Log
 import android.view.Surface
+import java.lang.ref.WeakReference
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sticam.ConnectionMode
@@ -57,6 +60,20 @@ data class SticamUiState(
     val controlPanelExpanded: Boolean = true,
     val showIpDialog: Boolean         = false,
 
+    // Filter state
+    val activeArFilter: String        = "None",
+    val activeLutFilter: String       = "None",
+    val arFaceData: com.sticam.engine.ArFaceData? = null,
+    
+    // Rotated dimensions
+    val outW: Int                     = 1920,
+    val outH: Int                     = 1080,
+    val isRotated: Boolean            = false,
+    val outputRotation: Int           = 0,
+    val sensorOrientation: Int        = 90,
+    val isFrontCamera: Boolean        = false,
+    val debugInfo: String             = "",
+
 
 
     // ── Recording ─────────────────────────────────────────────────────────────────────────
@@ -74,13 +91,14 @@ data class SticamUiState(
     val availableResolutions: List<StreamResolution> = emptyList(),
     val showPresetSelector: Boolean   = false,
     val focusLocked: Boolean          = false,
+    val isFaceTrackingEnabled: Boolean = false,
     val isMirrored: Boolean           = false,
     val isFlashOn: Boolean            = false,
     val tapFocusX: Float?             = null,
     val tapFocusY: Float?             = null,
     val brightnessValue: Float        = 0f,
-    val isoValue: Int                 = 0,
-    val focusValue: Float             = 0f,
+    val isoValue: Int                 = -1,
+    val focusValue: Float             = -1f,
     val isScreenOffMode: Boolean      = false,
     val wifiSignalBars: Int           = 4,
 )
@@ -99,7 +117,14 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(SticamUiState())
     val ui: StateFlow<SticamUiState> = _ui.asStateFlow()
 
+    /** Weak reference to the host Activity for programmatic orientation changes. */
+    private var activityRef: WeakReference<Activity>? = null
 
+
+    /** Called from MainActivity.onCreate to provide a reference for orientation toggling. */
+    fun attachActivity(activity: Activity) {
+        activityRef = WeakReference(activity)
+    }
 
     // ── Engines ───────────────────────────────────────────────────────────────
 
@@ -117,9 +142,39 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
 
         // Hardware capabilities → UI
         engine.onCharacteristicsReady = {
-            _ui.update { s -> s.copy(
-                maxZoom = engine.maxZoom,
-            )}
+            _ui.update { s -> 
+                val isFront = engine.isFrontCamera
+                val faceStr = if (isFront) "FRONT" else "BACK"
+                val debugText = "Face: $faceStr | Mirror: ${s.isMirrored} | OutRot: ${engine.outputRotation} | DevOri: ${engine.gravityRotation} | SenOri: ${engine.sensorOrientation} | Res: ${engine.outW}x${engine.outH}"
+                s.copy(
+                    maxZoom = engine.maxZoom,
+                    zoom = engine.curZoom,
+                    outW = engine.outW,
+                    outH = engine.outH,
+                    isRotated = true,
+                    outputRotation = engine.outputRotation,
+                    sensorOrientation = engine.sensorOrientation,
+                    isFrontCamera = isFront,
+                    debugInfo = debugText
+                )
+            }
+        }
+
+        engine.onOrientationChanged = {
+            _ui.update { s -> 
+                val isFront = engine.isFrontCamera
+                val faceStr = if (isFront) "FRONT" else "BACK"
+                val debugText = "Face: $faceStr | Mirror: ${s.isMirrored} | OutRot: ${engine.outputRotation} | DevOri: ${engine.gravityRotation} | SenOri: ${engine.sensorOrientation} | Res: ${engine.outW}x${engine.outH}"
+                s.copy(
+                    outW = engine.outW,
+                    outH = engine.outH,
+                    isRotated = true,
+                    outputRotation = engine.outputRotation,
+                    sensorOrientation = engine.sensorOrientation,
+                    isFrontCamera = isFront,
+                    debugInfo = debugText
+                )
+            }
         }
 
     }
@@ -150,11 +205,24 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectCamera(id: String) {
-        val wasStreaming = _ui.value.isStreaming
+        if (_ui.value.selectedCameraId == id) return
         _ui.update { it.copy(selectedCameraId = id, showCameraSelector = false) }
         loadSupportedResolutions(id)
-        if (wasStreaming) {
-            restartCameraEngine()
+        
+        // Restart the camera engine with the new camera ID if currently streaming
+        if (_ui.value.isStreaming) {
+            engine.stop(keepThreads = true)
+            // Wait briefly for camera hardware state cleanup
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                engine.start(
+                    previewSurface = engine.activePreviewSurface,
+                    cameraId       = id,
+                    width          = _ui.value.preset.width,
+                    height         = _ui.value.preset.height,
+                    fps            = _ui.value.preset.fps,
+                    bitrateMbps    = 8
+                )
+            }, 300)
         }
     }
 
@@ -167,6 +235,8 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         val nextCam = list[nextIndex]
         selectCamera(nextCam.id)
     }
+
+
 
     fun toggleFocusLock() {
         val nextState = !_ui.value.focusLocked
@@ -221,10 +291,11 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     // ─────────────────────────────────────────────────────────────────────────
 
     fun selectPreset(p: StreamResolution) {
-        val wasStreaming = _ui.value.isStreaming
+        val oldPreset = _ui.value.preset
         _ui.update { it.copy(preset = p, showPresetSelector = false) }
-        if (wasStreaming) {
-            restartCameraEngine()
+        if (oldPreset != p) {
+            engine.activePreviewSurface?.let { restartCameraEngine(it) }
+            sendSyncParamsToClient() // Sync new resolution state back to PC
         }
     }
 
@@ -235,22 +306,14 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
             val map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return
             val sizes = map.getOutputSizes(android.graphics.ImageFormat.PRIVATE) ?: return
             
-            // Filter to standard video aspects (e.g. 16:9 is ideal for webcam)
-            val list = sizes.filter {
-                val ratio = it.width.toFloat() / it.height.toFloat()
-                ratio in 1.7f..1.8f
-            }
+            val allowed = setOf(
+                "3840x2160", "2560x1440", "1920x1080", "1280x720", 
+                "960x540", "854x480", "640x360"
+            )
+            
+            val list = sizes.toList()
             .distinctBy { "${it.width}x${it.height}" }
-            .filter { size ->
-                // Keep only exact standard standard resolutions or small resolutions (< 720p)
-                // Discard custom high resolutions (e.g., 3200x1800) which overload the hardware AVC encoder.
-                val isStandard = (size.width == 7680 && size.height == 4320) ||
-                                 (size.width == 3840 && size.height == 2160) ||
-                                 (size.width == 2560 && size.height == 1440) ||
-                                 (size.width == 1920 && size.height == 1080) ||
-                                 (size.width == 1280 && size.height == 720)
-                isStandard || (size.width < 1280 && size.height < 720)
-            }
+            .filter { "${it.width}x${it.height}" in allowed }
             .sortedByDescending { it.width * it.height }
 
             val finalResList = mutableListOf<StreamResolution>()
@@ -326,9 +389,20 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
 
     fun togglePresetSelector() = _ui.update { it.copy(showPresetSelector = !it.showPresetSelector) }
 
-    private fun restartCameraEngine() {
+    fun onPreviewSurfaceReady(surface: Surface) {
+        if (!_ui.value.isStreaming) {
+            startStreaming(surface)
+        } else {
+            restartCameraEngine(surface)
+        }
+    }
+
+    fun onPreviewSurfaceDestroyed() {
+        // We do not stop the server here, just let the engine know the surface is gone if needed
+    }
+
+    private fun restartCameraEngine(surface: Surface) {
         val state = _ui.value
-        val surface = engine.activePreviewSurface
         viewModelScope.launch {
             try {
                 engine.stop(keepThreads = true)
@@ -343,6 +417,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                     fps            = state.preset.fps,
                     bitrateMbps    = state.preset.bitrateMbps,
                 )
+                reapplyCameraStates()
                 // Instantly request keyframe to force SPS/PPS headers
                 engine.requestKeyFrame()
             } catch (e: Exception) {
@@ -354,6 +429,21 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     // ─────────────────────────────────────────────────────────────────────────
     //  Streaming
     // ─────────────────────────────────────────────────────────────────────────
+
+    private fun reapplyCameraStates() {
+        val state = _ui.value
+        engine.isFaceTrackingEnabled = state.isFaceTrackingEnabled
+        engine.setExposureCompensation(state.brightnessValue)
+        engine.setManualIso(state.isoValue)
+        if (state.focusValue > 0f) {
+            engine.setFocusDistance(state.focusValue)
+        }
+        if (state.focusLocked) {
+            engine.setFocusLock(true)
+        }
+        engine.setFlashOn(state.isFlashOn)
+        engine.setZoom(state.zoom)
+    }
 
     /**
      * Called by SticamScreen's SurfaceTextureListener once the TextureView
@@ -370,12 +460,43 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                 viewModelScope.launch {
                     kotlinx.coroutines.delay(300)
                     sendMirrorStateToClient()
+                    sendSyncParamsToClient()
                 }
             }
             srv.onClientDisconnected = { _ui.update { it.copy(clientConnected = false, statusMessage = "WAITING_CLIENT") } }
             // Cache SPS/PPS when StreamServer extracts them
             srv.onConfigData = { sps, pps -> cachedSps = sps; cachedPps = pps }
             srv.onSignalStrengthChanged = { bars -> _ui.update { it.copy(wifiSignalBars = bars) } }
+            
+            // Wire up incoming UI control events from Windows Client
+            srv.onParamsChangedFromHost = { zoom, faceTracking, iso, brightness, focus, flash, cameraId, resolution, arFilter, lutFilter ->
+                if (zoom != null) setZoom(zoom)
+                if (faceTracking != null) setFaceTracking(faceTracking)
+                if (iso != null) setIso(iso)
+                if (brightness != null) setBrightness(brightness)
+                if (focus != null) setFocusDistance(focus)
+                if (flash != null && flash != _ui.value.isFlashOn) toggleFlash()
+                
+                if (cameraId != null && cameraId != _ui.value.selectedCameraId) {
+                    _ui.value.cameras.find { it.id == cameraId }?.let { cam ->
+                        _ui.update { it.copy(selectedCameraId = cam.id) }
+                        loadSupportedResolutions(cam.id)
+                        // Ensure UI syncs back the new resolutions map to Windows Client
+                        sendSyncParamsToClient()
+                    }
+                } else if (resolution != null) {
+                    val currentResString = "${_ui.value.preset.width}x${_ui.value.preset.height}"
+                    if (resolution != currentResString) {
+                        _ui.value.availableResolutions.find { "${it.width}x${it.height}" == resolution }?.let { res ->
+                            selectPreset(res)
+                        }
+                    }
+                }
+                
+                if (arFilter != null) setArFilter(arFilter)
+                if (lutFilter != null) setLutFilter(lutFilter)
+            }
+            
             srv.start()
             server = srv
 
@@ -399,6 +520,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                     fps            = state.preset.fps,
                     bitrateMbps    = state.preset.bitrateMbps,
                 )
+                reapplyCameraStates()
                 _ui.update { it.copy(isStreaming = true, statusMessage = "WAITING_CLIENT") }
             } catch (e: Exception) {
                 _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
@@ -459,12 +581,33 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
 
 
     // ─────────────────────────────────────────────────────────────────────────
+    //  Orientation
+    // ─────────────────────────────────────────────────────────────────────────
+
+    fun cycleOrientation() {
+        val next = (engine.outputRotation + 90) % 360
+        engine.setManualRotation(next)
+        _ui.update { s -> 
+            val isFront = engine.isFrontCamera
+            val faceStr = if (isFront) "FRONT" else "BACK"
+            val debugText = "Face: $faceStr | Mirror: ${s.isMirrored} | OutRot: ${engine.outputRotation} | DevOri: ${engine.gravityRotation} | SenOri: ${engine.sensorOrientation} | Res: ${engine.outW}x${engine.outH}"
+            s.copy(debugInfo = debugText, outputRotation = next) 
+        }
+        sendSyncParamsToClient()
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     //  Mirror
     // ─────────────────────────────────────────────────────────────────────────
 
     fun toggleMirror() {
         val next = !_ui.value.isMirrored
-        _ui.update { it.copy(isMirrored = next) }
+        _ui.update { s -> 
+            val isFront = engine.isFrontCamera
+            val faceStr = if (isFront) "FRONT" else "BACK"
+            val debugText = "Face: $faceStr | Mirror: ${next} | OutRot: ${engine.outputRotation} | DevOri: ${engine.gravityRotation} | Res: ${engine.outW}x${engine.outH}"
+            s.copy(isMirrored = next, debugInfo = debugText) 
+        }
         sendMirrorStateToClient()
     }
 
@@ -475,6 +618,21 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         srv.sendCommand(json)
     }
 
+    private fun sendSyncParamsToClient() {
+        val srv = server ?: return
+        val state = _ui.value
+        
+        val camerasJson = state.cameras.joinToString(",") { 
+            "{\"id\":\"${it.id}\",\"label\":\"${it.label}\"}" 
+        }
+        val resJson = state.availableResolutions.map { "${it.width}x${it.height}" }
+            .distinct().joinToString(",") { "\"$it\"" }
+            
+        val json = "{\"cmd\":\"sync_params\",\"max_focus\":${engine.maxFocusDistance},\"face_tracking\":${state.isFaceTrackingEnabled},\"zoom\":${state.zoom},\"brightness\":${state.brightnessValue},\"iso\":${state.isoValue},\"focus\":${state.focusValue},\"flash\":${state.isFlashOn},\"cameras\":[$camerasJson],\"selected_camera\":\"${state.selectedCameraId}\",\"resolutions\":[$resJson],\"selected_resolution\":\"${state.preset.width}x${state.preset.height}\",\"ar_filter\":\"${state.activeArFilter}\",\"lut_filter\":\"${state.activeLutFilter}\",\"orientation\":${state.outputRotation}}"
+        
+        srv.sendCommand(json)
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     //  Zoom
     // ─────────────────────────────────────────────────────────────────────────
@@ -482,6 +640,31 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     fun setZoom(ratio: Float) {
         engine.setZoom(ratio)
         _ui.update { it.copy(zoom = engine.curZoom) }
+    }
+
+    fun setFaceTracking(enabled: Boolean) {
+        _ui.update { it.copy(isFaceTrackingEnabled = enabled) }
+        engine.isFaceTrackingEnabled = enabled
+    }
+
+    fun setArFilter(filterName: String) {
+        val wasZeroCopy = _ui.value.activeArFilter == "None" && _ui.value.activeLutFilter == "None"
+        _ui.update { it.copy(activeArFilter = filterName) }
+        engine.activeArFilter = filterName
+        val isZeroCopy = filterName == "None" && _ui.value.activeLutFilter == "None"
+        if (wasZeroCopy != isZeroCopy) {
+            engine.activePreviewSurface?.let { restartCameraEngine(it) }
+        }
+    }
+
+    fun setLutFilter(filterName: String) {
+        val wasZeroCopy = _ui.value.activeArFilter == "None" && _ui.value.activeLutFilter == "None"
+        _ui.update { it.copy(activeLutFilter = filterName) }
+        engine.activeLutFilter = filterName
+        val isZeroCopy = _ui.value.activeArFilter == "None" && filterName == "None"
+        if (wasZeroCopy != isZeroCopy) {
+            engine.activePreviewSurface?.let { restartCameraEngine(it) }
+        }
     }
 
     fun setBrightness(value: Float) {
@@ -495,6 +678,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setFocusDistance(value: Float) {
+        engine.setFocusDistance(value)
         _ui.update { it.copy(focusValue = value) }
     }
 

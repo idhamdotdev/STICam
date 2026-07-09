@@ -3,6 +3,7 @@ package com.sticam.ui
 import androidx.activity.compose.BackHandler
 import android.graphics.Matrix
 import android.view.TextureView
+import android.view.Surface
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
@@ -23,9 +24,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke as DrawStroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.pointerInput
@@ -78,33 +81,76 @@ fun SticamScreen(vm: SticamViewModel) {
                 onConnectClick = { startRequested = true }
             )
         } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black)
-            ) {
-                Box(
+            val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+            val isPortraitUi = configuration.orientation == android.content.res.Configuration.ORIENTATION_PORTRAIT
+            if (isPortraitUi) {
+                // Portrait output: preview (9:16) on left, side controls on right
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .systemBarsPadding()
                 ) {
-                    ConnectedStreamLayout(
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .background(Color.Black)
+                            .clipToBounds(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ConnectedStreamLayout(
+                            state = state,
+                            vm = vm,
+                            activeSlider = activeSlider,
+                            isPortrait = true,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    SideControlBar(
                         state = state,
                         vm = vm,
-                        activeSlider = activeSlider
+                        onStopClick = { vm.stopStreaming() },
+                        activeSlider = activeSlider,
+                        onSliderToggle = { activeSlider = it }
                     )
                 }
-
-                // Bottom control bar
-                BottomControlBar(
-                    state = state,
-                    vm = vm,
-                    onStopClick = { vm.stopStreaming() },
-                    activeSlider = activeSlider,
-                    onSliderToggle = { activeSlider = it }
-                )
+            } else {
+                // Landscape output: preview (16:9) on top, bottom controls below
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black)
+                        .systemBarsPadding()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .background(Color.Black)
+                            .clipToBounds(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        ConnectedStreamLayout(
+                            state = state,
+                            vm = vm,
+                            activeSlider = activeSlider,
+                            isPortrait = false,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
+                    BottomControlBar(
+                        state = state,
+                        vm = vm,
+                        onStopClick = { vm.stopStreaming() },
+                        activeSlider = activeSlider,
+                        onSliderToggle = { activeSlider = it }
+                    )
+                }
             }
         }
+
 
         if (state.showPresetSelector) {
             SelectorOverlay(title = "Quality", onDismiss = { vm.togglePresetSelector() }) {
@@ -144,60 +190,71 @@ fun SticamScreen(vm: SticamViewModel) {
 fun ConnectedStreamLayout(
     state: SticamUiState,
     vm: SticamViewModel,
-    activeSlider: String?
+    activeSlider: String?,
+    isPortrait: Boolean = false,
+    modifier: Modifier = Modifier
 ) {
     BoxWithConstraints(
-        Modifier
-            .fillMaxSize()
+        modifier
             .background(Color.Black)
+            .clipToBounds()
     ) {
         // ── Full-screen camera preview with pinch-to-zoom ─────────────────
         var pinchZoom by remember { mutableStateOf(state.zoom) }
-        CameraPreviewLayer(
-            vm = vm,
-            state = state,
+        val bottomPadding = if (!isPortrait && activeSlider != null) 110.dp else 0.dp
+        Box(
             modifier = Modifier
                 .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onTap = { offset ->
-                            val xNorm = offset.x / constraints.maxWidth.toFloat()
-                            val yNorm = offset.y / constraints.maxHeight.toFloat()
-                            vm.tapToFocus(xNorm, yNorm, constraints.maxWidth, constraints.maxHeight)
+                .padding(bottom = bottomPadding)
+        ) {
+            BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                CameraPreviewLayer(
+                    vm = vm,
+                    state = state,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .pointerInput(Unit) {
+                            detectTapGestures(
+                                onTap = { offset ->
+                                    val xNorm = offset.x / constraints.maxWidth.toFloat()
+                                    val yNorm = offset.y / constraints.maxHeight.toFloat()
+                                    vm.tapToFocus(xNorm, yNorm, constraints.maxWidth, constraints.maxHeight)
+                                }
+                            )
                         }
-                    )
-                }
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, _, zoomChange, _ ->
-                        pinchZoom = (pinchZoom * zoomChange).coerceIn(1f, state.maxZoom)
-                        vm.setZoom(pinchZoom)
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, _, zoomChange, _ ->
+                                pinchZoom = (pinchZoom * zoomChange).coerceIn(1f, state.maxZoom)
+                                vm.setZoom(pinchZoom)
+                            }
+                        }
+                )
+
+                // ── Tap-to-Focus Ring Overlay ─────────────────────────────────────
+                val tx = state.tapFocusX
+                val ty = state.tapFocusY
+                if (tx != null && ty != null) {
+                    val density = androidx.compose.ui.platform.LocalDensity.current
+                    val focusXDp = with(density) { (tx * constraints.maxWidth).toDp() }
+                    val focusYDp = with(density) { (ty * constraints.maxHeight).toDp() }
+                    Box(
+                        Modifier
+                            .size(68.dp)
+                            .offset(x = focusXDp - 34.dp, y = focusYDp - 34.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .border(1.5.dp, Color(0xFFFFCC00), CircleShape)
+                        )
+                        Box(
+                            Modifier
+                                .size(6.dp)
+                                .background(Color(0xFFFFCC00), CircleShape)
+                        )
                     }
                 }
-        )
-
-        // ── Tap-to-Focus Ring Overlay ─────────────────────────────────────
-        val tx = state.tapFocusX
-        val ty = state.tapFocusY
-        if (tx != null && ty != null) {
-            val density = androidx.compose.ui.platform.LocalDensity.current
-            val focusXDp = with(density) { (tx * constraints.maxWidth).toDp() }
-            val focusYDp = with(density) { (ty * constraints.maxHeight).toDp() }
-            Box(
-                Modifier
-                    .size(68.dp)
-                    .offset(x = focusXDp - 34.dp, y = focusYDp - 34.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .border(1.5.dp, Color(0xFFFFCC00), CircleShape)
-                )
-                Box(
-                    Modifier
-                        .size(6.dp)
-                        .background(Color(0xFFFFCC00), CircleShape)
-                )
             }
         }
 
@@ -242,27 +299,77 @@ fun ConnectedStreamLayout(
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 modifier = Modifier
-                    .statusBarsPadding()
                     .padding(top = 14.dp)
                     .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(20.dp))
                     .padding(horizontal = 14.dp, vertical = 4.dp)
             )
         }
 
+        // ── Connection status indicator overlay (top-right corner) ──
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 14.dp, end = 14.dp)
+                .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(20.dp))
+                .border(1.5.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(20.dp))
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val dotColor = if (state.clientConnected) Color(0xFF00FF41) else Color(0xFFFFB300)
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .background(dotColor, CircleShape)
+                )
+
+                val isUsb = state.mode is com.sticam.ConnectionMode.Usb
+                val statusText = if (state.clientConnected) {
+                    if (isUsb) "CONNECTED VIA USB" else "CONNECTED VIA WI-FI"
+                } else {
+                    "WAITING FOR PC..."
+                }
+                Text(
+                    text = statusText,
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = Lalezar
+                )
+                if (!isUsb && state.clientConnected) {
+                    SignalBars(
+                        bars = state.wifiSignalBars,
+                        modifier = Modifier.padding(bottom = 1.dp)
+                    )
+                }
+            }
+        }
+
 
 
         // ── Active Slider Overlay ──
-        Box(
-            modifier = Modifier
+        val sliderModifier = if (isPortrait) {
+            Modifier
+                .align(Alignment.Center)
+                .graphicsLayer(rotationZ = -90f)
+                .width(320.dp)
+                .padding(horizontal = 16.dp)
+        } else {
+            Modifier
                 .align(Alignment.BottomCenter)
-                .padding(bottom = 70.dp)
+                .padding(bottom = 16.dp)
                 .fillMaxWidth()
                 .padding(horizontal = 24.dp)
-        ) {
+        }
+
+        Box(modifier = sliderModifier) {
             AnimatedVisibility(
                 visible = activeSlider != null,
-                enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
-                exit = fadeOut() + slideOutVertically(targetOffsetY = { it })
+                enter = fadeIn() + if (isPortrait) fadeIn() else slideInVertically(initialOffsetY = { it }),
+                exit = fadeOut() + if (isPortrait) fadeOut() else slideOutVertically(targetOffsetY = { it })
             ) {
                 Box(
                     modifier = Modifier
@@ -288,18 +395,36 @@ fun ConnectedStreamLayout(
                         }
                         "iso" -> {
                             var isoVal by remember { mutableStateOf(state.isoValue.toFloat()) }
-                            HudSlider(
-                                label = "ISO SENSITIVITY",
-                                value = isoVal,
-                                valueMin = 0f,
-                                valueMax = 3200f,
-                                displayValue = if (isoVal < 100f) "AUTO" else "${isoVal.toInt()}",
-                                onValueChange = {
-                                    isoVal = it
-                                    val finalValue = if (it < 100f) 0 else it.toInt()
-                                    vm.setIso(finalValue)
+                            Column {
+                                HudSlider(
+                                    label = "ISO SENSITIVITY",
+                                    value = isoVal.coerceAtLeast(0f),
+                                    valueMin = 0f,
+                                    valueMax = 3200f,
+                                    displayValue = if (isoVal < 0f) "AUTO" else if (isoVal == 0f) "MIN" else "${isoVal.toInt()}",
+                                    onValueChange = {
+                                        isoVal = it
+                                        vm.setIso(it.toInt())
+                                    }
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.clickable {
+                                        if (isoVal < 0f) {
+                                            isoVal = 100f
+                                            vm.setIso(100)
+                                        } else {
+                                            isoVal = -1f
+                                            vm.setIso(-1)
+                                        }
+                                    }
+                                ) {
+                                    CustomRadioButton(selected = isoVal < 0f)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("AUTO ISO", color = Color.White, fontFamily = Lalezar, fontSize = 14.sp)
                                 }
-                            )
+                            }
                         }
                         "focus" -> {
                             var focusVal by remember { mutableStateOf(state.focusValue) }
@@ -336,74 +461,125 @@ private fun CameraPreviewLayer(
     var readySurface by remember { mutableStateOf<android.view.Surface?>(null) }
 
     /**
-     * Mathematically perfect aspect-ratio correction for any screen shape.
-     * Keeps camera preview centered, cropped (full-fit), and completely unstretched.
+     * Standard Android Camera2 preview transform.
+     *
+     * The camera sensor buffer always arrives in sensor-native orientation
+     * regardless of screen orientation. We always swap buffer dimensions
+     * (camH × camW) and apply a rotation that varies with display rotation:
+     *   ROTATION_0  (portrait)  → 180°
+     *   ROTATION_90 (landscape) → 270°
+     * Mirror is applied last as a simple X-axis flip.
      */
-    @Suppress("DEPRECATION")
-    fun applyTransform(tv: TextureView, viewW: Int, viewH: Int) {
-        val activity = context as? android.app.Activity ?: return
-        val rotation = activity.windowManager.defaultDisplay.rotation
-        
+     fun applyTransform(tv: TextureView, viewW: Int, viewH: Int) {
+        if (viewW == 0 || viewH == 0) return
         val matrix = Matrix()
-        val viewRect = android.graphics.RectF(0f, 0f, viewW.toFloat(), viewH.toFloat())
-        
-        val camW = state.preset.width.toFloat()
-        val camH = state.preset.height.toFloat()
-        
-        // Swapped dimensions for the camera buffer's natural orientation relative to portrait device
-        val bufferRect = android.graphics.RectF(0f, 0f, camH, camW)
-        
-        val cx = viewRect.centerX()
-        val cy = viewRect.centerY()
-        
-        if (rotation == android.view.Surface.ROTATION_90 || rotation == android.view.Surface.ROTATION_270) {
-            bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
-            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
-            
-            val scale = maxOf(
-                viewH.toFloat() / camH,
-                viewW.toFloat() / camW
-            )
-            matrix.postScale(scale, scale, cx, cy)
-            
-            val rotateDegree = 90f * (rotation - 2)
-            matrix.postRotate(rotateDegree, cx, cy)
-        } else if (rotation == android.view.Surface.ROTATION_180) {
-            matrix.postRotate(180f, cx, cy)
+        val cx = viewW / 2f
+        val cy = viewH / 2f
+        val camW = state.outW.toFloat()   // e.g. 1920
+        val camH = state.outH.toFloat()   // e.g. 1080
+
+        val isGlPath = state.activeLutFilter != "None" || state.activeArFilter != "None"
+        val sensorOri = state.sensorOrientation
+        val outputRot = state.outputRotation
+
+        // Calculate the base rotation needed to align the sensor with the screen.
+        // On the zero-copy path, we cancel the sensor orientation: (360 - sensorOri) % 360.
+        // For the front camera, the SurfaceTexture default buffer transform implicitly mirrors
+        // the image horizontally, which is equivalent to an extra 180° rotation. We add 180°
+        // on the zero-copy path for front cameras to compensate and render the preview upright.
+        // On the GL path, OpenGL adds a vertical flip (equivalent to 180°), so:
+        // (360 - sensorOri + 180) % 360.
+        val baseRot = if (isGlPath) {
+            (360 - sensorOri + 180) % 360
+        } else {
+            if (state.isFrontCamera) (360 - sensorOri + 180) % 360
+            else (360 - sensorOri) % 360
         }
-        
-        if (state.isMirrored) {
-            matrix.postScale(-1f, 1f, cx, cy)
-        }
-        
+
+        val rotationDeg = ((baseRot + outputRot) % 360).toFloat()
+
+        // Since the SurfaceTexture's default transform rotates by sensorOrientation on the
+        // zero-copy path, it swaps the width and height of the incoming buffer.
+        // To cancel this stretching, we must swap the target dimensions in setRectToRect.
+        // On the GL path, there is no default rotation, so we use the unswapped dimensions.
+        val bufferW = if (isGlPath) camW else camH
+        val bufferH = if (isGlPath) camH else camW
+
+        val bufferRect = android.graphics.RectF(0f, 0f, bufferW, bufferH)
+        bufferRect.offset(cx - bufferRect.centerX(), cy - bufferRect.centerY())
+        matrix.setRectToRect(
+            android.graphics.RectF(0f, 0f, viewW.toFloat(), viewH.toFloat()),
+            bufferRect,
+            Matrix.ScaleToFit.FILL
+        )
+
+        // If the user's selected manual orientation rotation is portrait (90° or 270°),
+        // the visible dimensions swap, so we fit the portrait image with black bars.
+        // Otherwise, it is landscape (0° or 180°), filling the 16:9 box perfectly.
+        val isRotated = (outputRot == 90 || outputRot == 270)
+        val visW = if (isRotated) camH else camW
+        val visH = if (isRotated) camW else camH
+
+        // Fit the video within the view, preserving aspect ratio (letterbox with black bars).
+        // Using minOf ensures the full frame is always visible and never bleeds into the HUD.
+        val scale = minOf(viewW / visW, viewH / visH)
+        matrix.postScale(scale, scale, cx, cy)
+
+        matrix.postRotate(rotationDeg, cx, cy)
+
+        val mirror = if (state.isMirrored) -1f else 1f
+        matrix.postScale(mirror, 1f, cx, cy)
+
         tv.setTransform(matrix)
     }
 
-    AndroidView(
-        factory = { ctx ->
-            TextureView(ctx).apply {
-                surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
-                    override fun onSurfaceTextureAvailable(
-                        st: android.graphics.SurfaceTexture, w: Int, h: Int
-                    ) {
-                        st.setDefaultBufferSize(state.preset.width, state.preset.height)
-                        applyTransform(this@apply, w, h)
-                        readySurface = android.view.Surface(st)
-                        if (!state.isStreaming) vm.startStreaming(readySurface)
+    androidx.compose.runtime.key(state.selectedCameraId, state.outW, state.outH) {
+        Box(modifier = modifier.clipToBounds()) {
+            AndroidView(
+                factory = { ctx ->
+                    TextureView(ctx).apply {
+                        surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+                            override fun onSurfaceTextureAvailable(
+                                st: android.graphics.SurfaceTexture, w: Int, h: Int
+                            ) {
+                                st.setDefaultBufferSize(state.outW, state.outH)
+                                applyTransform(this@apply, w, h)
+                                readySurface = android.view.Surface(st)
+                                vm.onPreviewSurfaceReady(readySurface!!)
+                            }
+                            override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) {
+                                st.setDefaultBufferSize(state.outW, state.outH)
+                                applyTransform(this@apply, w, h)
+                            }
+                            override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
+                                vm.onPreviewSurfaceDestroyed()
+                                readySurface = null
+                                return true
+                            }
+                            override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
+                        }
                     }
-                    override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) {
-                        st.setDefaultBufferSize(state.preset.width, state.preset.height)
-                        applyTransform(this@apply, w, h)
-                    }
-                    override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
-                        readySurface = null; return true
-                    }
-                    override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
-                }
+                },
+                update = { tv ->
+                    applyTransform(tv, tv.width, tv.height)
+                },
+                modifier = Modifier.fillMaxSize(),
+            )
+            
+            if (state.debugInfo.isNotEmpty()) {
+                androidx.compose.material3.Text(
+                    text = state.debugInfo,
+                    color = androidx.compose.ui.graphics.Color.White,
+                    modifier = Modifier
+                        .align(androidx.compose.ui.Alignment.TopStart)
+                        .padding(top = 40.dp, start = 16.dp)
+                        .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f))
+                        .padding(4.dp),
+                    style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                )
             }
-        },
-        modifier = modifier,
-    )
+        }
+    }
 }
 
 
@@ -716,10 +892,11 @@ fun BottomControlBar(
     vm: SticamViewModel,
     onStopClick: () -> Unit,
     activeSlider: String?,
-    onSliderToggle: (String?) -> Unit
+    onSliderToggle: (String?) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .background(Color(0xFF0C1328))
             .padding(horizontal = 16.dp, vertical = 12.dp),
@@ -768,6 +945,20 @@ fun BottomControlBar(
             }
 
             ControlButton(
+                active = false,
+                onClick = { vm.cycleOrientation() }
+            ) {
+                OrientationIcon(color = Color.White)
+            }
+
+            ControlButton(
+                active = state.isFaceTrackingEnabled,
+                onClick = { vm.setFaceTracking(!state.isFaceTrackingEnabled) }
+            ) {
+                FaceIcon(color = Color.White)
+            }
+
+            ControlButton(
                 active = state.isFlashOn,
                 onClick = { vm.toggleFlash() }
             ) {
@@ -782,36 +973,9 @@ fun BottomControlBar(
             }
         }
 
-        // ── Connection status indicator in the bottom bar ──
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 8.dp)
-        ) {
-            val isUsb = state.mode is com.sticam.ConnectionMode.Usb
-            val statusText = if (state.clientConnected) {
-                if (isUsb) "CONNECTED VIA USB" else "CONNECTED VIA WI-FI"
-            } else {
-                "WAITING FOR PC..."
-            }
-            Text(
-                text = statusText,
-                color = if (state.clientConnected) Color.White else Color(0xFFFFB300),
-                fontSize = 14.sp,
-                fontWeight = FontWeight.ExtraBold,
-                fontFamily = Lalezar
-            )
-            if (!isUsb && state.clientConnected) {
-                Spacer(modifier = Modifier.width(8.dp))
-                SignalBars(
-                    bars = state.wifiSignalBars,
-                    modifier = Modifier.padding(bottom = 2.dp)
-                )
-            }
-        }
-
         Box(
             modifier = Modifier
-                .width(180.dp)
+                .width(120.dp)
                 .height(54.dp)
                 .border(3.dp, Color(0xFFD1D5DB))
                 .background(Color(0xFF2A2A2A))
@@ -942,6 +1106,43 @@ fun GearIcon(color: Color) {
 }
 
 @Composable
+fun OrientationIcon(color: Color) {
+    Canvas(modifier = Modifier.size(24.dp)) {
+        val w = size.width
+        val h = size.height
+        val cx = w / 2f
+        val cy = h / 2f
+        
+        // Curved arrow to represent screen rotation
+        drawArc(
+            color = color,
+            startAngle = 45f,
+            sweepAngle = 270f,
+            useCenter = false,
+            style = DrawStroke(width = 2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        )
+        
+        // Arrow head
+        val arrowPath = Path().apply {
+            moveTo(cx + 8.dp.toPx(), cy + 8.dp.toPx())
+            lineTo(cx + 14.dp.toPx(), cy + 8.dp.toPx())
+            lineTo(cx + 14.dp.toPx(), cy + 2.dp.toPx())
+        }
+        drawPath(arrowPath, color = color)
+        
+        // Phone outline in the center
+        val pw = 8.dp.toPx()
+        val ph = 12.dp.toPx()
+        drawRect(
+            color = color.copy(alpha = 0.8f),
+            topLeft = Offset(cx - pw/2f, cy - ph/2f),
+            size = androidx.compose.ui.geometry.Size(pw, ph),
+            style = DrawStroke(width = 1.5.dp.toPx())
+        )
+    }
+}
+
+@Composable
 fun RotateIcon(color: Color) {
     Canvas(modifier = Modifier.size(24.dp)) {
         val w = size.width
@@ -1022,6 +1223,35 @@ fun FlashlightIcon(color: Color) {
 }
 
 @Composable
+fun FaceIcon(color: Color) {
+    Canvas(modifier = Modifier.size(24.dp)) {
+        val w = size.width
+        val h = size.height
+        val cx = w / 2f
+        val cy = h / 2f
+        val r = w * 0.4f
+
+        drawCircle(color = color, radius = r, style = DrawStroke(width = 2.dp.toPx()))
+
+        // Left eye
+        drawCircle(color = color, radius = 1.5.dp.toPx(), center = Offset(cx - w * 0.15f, cy - h * 0.1f))
+        // Right eye
+        drawCircle(color = color, radius = 1.5.dp.toPx(), center = Offset(cx + w * 0.15f, cy - h * 0.1f))
+        
+        // Smile / mouth
+        drawArc(
+            color = color,
+            startAngle = 20f,
+            sweepAngle = 140f,
+            useCenter = false,
+            topLeft = Offset(cx - w * 0.2f, cy - h * 0.1f),
+            size = androidx.compose.ui.geometry.Size(w * 0.4f, h * 0.4f),
+            style = DrawStroke(width = 2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+        )
+    }
+}
+
+@Composable
 fun ScreenOffIcon(color: Color) {
     Canvas(modifier = Modifier.size(24.dp)) {
         val w = size.width
@@ -1086,6 +1316,154 @@ fun SignalBars(bars: Int, modifier: Modifier = Modifier) {
                         shape = androidx.compose.foundation.shape.RoundedCornerShape(1.dp)
                     )
             )
+        }
+    }
+}
+
+@Composable
+fun SideControlBar(
+    state: SticamUiState,
+    vm: SticamViewModel,
+    onStopClick: () -> Unit,
+    activeSlider: String?,
+    onSliderToggle: (String?) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .fillMaxHeight()
+            .background(Color(0xFF0C1328))
+            .padding(vertical = 12.dp, horizontal = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        val iconColor = Color.White
+        fun Modifier.portraitRotate() = this.graphicsLayer(rotationZ = -90f)
+
+        // Column 1: Mirror, Exposure, ISO, Quality, Face Tracking
+        Column(
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxHeight()
+        ) {
+            ControlButton(
+                active = state.isMirrored,
+                onClick = { vm.toggleMirror() }
+            ) {
+                Box(Modifier.portraitRotate()) { MirrorIcon(color = iconColor) }
+            }
+
+            ControlButton(
+                active = activeSlider == "brightness",
+                onClick = { onSliderToggle(if (activeSlider == "brightness") null else "brightness") }
+            ) {
+                Box(Modifier.portraitRotate()) { SunIcon(color = iconColor) }
+            }
+
+            ControlButton(
+                active = activeSlider == "iso",
+                onClick = { onSliderToggle(if (activeSlider == "iso") null else "iso") }
+            ) {
+                Box(Modifier.portraitRotate()) {
+                    Text("ISO", color = iconColor, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
+                }
+            }
+
+            ControlButton(
+                active = state.showPresetSelector,
+                onClick = { vm.togglePresetSelector() }
+            ) {
+                Box(Modifier.portraitRotate()) { GearIcon(color = iconColor) }
+            }
+
+            ControlButton(
+                active = state.isFaceTrackingEnabled,
+                onClick = { vm.setFaceTracking(!state.isFaceTrackingEnabled) }
+            ) {
+                Box(Modifier.portraitRotate()) { FaceIcon(color = iconColor) }
+            }
+        }
+
+        // Column 2: Flip Camera, Orientation, Flash, Screen Off, Connection Status, STOP Button
+        Column(
+            verticalArrangement = Arrangement.SpaceBetween,
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxHeight()
+        ) {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                ControlButton(
+                    active = false,
+                    onClick = { vm.flipCamera() }
+                ) {
+                    Box(Modifier.portraitRotate()) { RotateIcon(color = iconColor) }
+                }
+
+                ControlButton(
+                    active = false,
+                    onClick = { vm.cycleOrientation() }
+                ) {
+                    Box(Modifier.portraitRotate()) { OrientationIcon(color = iconColor) }
+                }
+
+                ControlButton(
+                    active = state.isFlashOn,
+                    onClick = { vm.toggleFlash() }
+                ) {
+                    Box(Modifier.portraitRotate()) { FlashlightIcon(color = iconColor) }
+                }
+
+                ControlButton(
+                    active = state.isScreenOffMode,
+                    onClick = { vm.setScreenOffMode(true) }
+                ) {
+                    Box(Modifier.portraitRotate()) { ScreenOffIcon(color = iconColor) }
+                }
+            }
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                val isUsb = state.mode is com.sticam.ConnectionMode.Usb
+                val statusText = if (state.clientConnected) {
+                    if (isUsb) "CONNECTED" else "WIFI"
+                } else {
+                    "WAITING"
+                }
+                Box(
+                    modifier = Modifier.graphicsLayer(rotationZ = -90f).padding(vertical = 4.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = statusText,
+                        color = if (state.clientConnected) Color.White else Color(0xFFFFB300),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = Lalezar,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .size(54.dp, 44.dp)
+                        .graphicsLayer(rotationZ = -90f)
+                        .border(2.dp, Color(0xFFD1D5DB))
+                        .background(Color(0xFF2A2A2A))
+                        .clickable { onStopClick() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "STOP",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontFamily = Lalezar
+                    )
+                }
+            }
         }
     }
 }

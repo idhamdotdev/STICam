@@ -207,23 +207,26 @@ namespace SticamHost.Stream
 
         private unsafe void FreeDecoder()
         {
-            if (_framePtr != IntPtr.Zero)
+            lock (_lock)
             {
-                var f = (AVFrame*)_framePtr;
-                ffmpeg.av_frame_free(&f);
-                _framePtr = IntPtr.Zero;
-            }
-            if (_pktPtr != IntPtr.Zero)
-            {
-                var p = (AVPacket*)_pktPtr;
-                ffmpeg.av_packet_free(&p);
-                _pktPtr = IntPtr.Zero;
-            }
-            if (_ctxPtr != IntPtr.Zero)
-            {
-                var c = (AVCodecContext*)_ctxPtr;
-                ffmpeg.avcodec_free_context(&c);
-                _ctxPtr = IntPtr.Zero;
+                if (_framePtr != IntPtr.Zero)
+                {
+                    var f = (AVFrame*)_framePtr;
+                    ffmpeg.av_frame_free(&f);
+                    _framePtr = IntPtr.Zero;
+                }
+                if (_pktPtr != IntPtr.Zero)
+                {
+                    var p = (AVPacket*)_pktPtr;
+                    ffmpeg.av_packet_free(&p);
+                    _pktPtr = IntPtr.Zero;
+                }
+                if (_ctxPtr != IntPtr.Zero)
+                {
+                    var c = (AVCodecContext*)_ctxPtr;
+                    ffmpeg.avcodec_free_context(&c);
+                    _ctxPtr = IntPtr.Zero;
+                }
             }
         }
 

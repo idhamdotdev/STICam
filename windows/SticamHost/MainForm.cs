@@ -52,7 +52,23 @@ namespace SticamHost
         private readonly Button       _menuDisconnect;
         private readonly Button       _menuVirtualCam;
         private readonly Button       _menuMirror;
+        private readonly Button       _menuFaceTracking;
         private readonly Label        _menuVcamStatus;
+        private readonly Panel        _panelControls;
+        private readonly Label        _lblControlsTitle;
+        private readonly SticamSlider _sliderZoom;
+        private readonly SticamSlider _sliderExposure;
+        private readonly SticamSlider _sliderIso;
+        private readonly SticamSlider _sliderFocus;
+        private readonly CheckBox     _chkAutoIso;
+        private readonly CheckBox     _chkAutoFocus;
+        private readonly CheckBox     _chkFlash;
+        private readonly Label        _lblCameraTitle;
+        private readonly ComboBox     _cbCamera;
+        private readonly Label        _lblResolutionTitle;
+        private readonly ComboBox     _cbResolution;
+        private readonly Label        _lblArTitle;
+        private readonly ComboBox     _cbArFilter;
 
         // hidden idle controls kept for logic compatibility
         private readonly CheckBox     _chkVirtualCam;
@@ -75,7 +91,10 @@ namespace SticamHost
         private readonly System.Windows.Forms.Timer _statsTimer;
         private bool _vcamActive;
         private bool _mirrorVideo;
+        private bool _faceTrackingActive;
         private bool _cinemaMode;
+        private bool _isSyncing;
+        private int _currentRotation = 0;
         private FormBorderStyle _prevBorderStyle;
         private FormWindowState _prevWindowState;
         private Rectangle _prevBounds;
@@ -235,12 +254,12 @@ namespace SticamHost
             _liveContainer = new Panel
             {
                 Dock      = DockStyle.Fill,
-                BackColor = Color.Black,
+                BackColor = NavyDark,
                 Visible   = false,
             };
             _videoPb = new PictureBox
             {
-                Dock      = DockStyle.Fill,
+                Dock      = DockStyle.None,
                 SizeMode  = PictureBoxSizeMode.Zoom,
                 BackColor = Color.Black,
             };
@@ -248,9 +267,9 @@ namespace SticamHost
             {
                 Text      = "Android Phone [USB]",
                 AutoSize  = true,
-                BackColor = Color.FromArgb(200, 255, 255, 255),
-                ForeColor = Color.FromArgb(30, 30, 30),
-                Font      = MakeFont(9f),
+                BackColor = NavyMid,
+                ForeColor = TextWhite,
+                Font      = MakeFont(11f, FontStyle.Bold),
                 Padding   = new Padding(10, 4, 10, 4),
             };
             _btnMenu = new Button
@@ -258,9 +277,9 @@ namespace SticamHost
                 Text      = "≡",
                 Width     = 40, Height = 36,
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(160, 0, 0, 0),
-                ForeColor = Color.White,
-                Font      = new Font("Segoe UI", 13f, FontStyle.Bold),
+                BackColor = NavyMid,
+                ForeColor = TextWhite,
+                Font      = MakeFont(14f, FontStyle.Bold),
                 Cursor    = Cursors.Hand,
                 Location  = new Point(8, 8),
             };
@@ -269,11 +288,11 @@ namespace SticamHost
 
             _lblWatermark = new Label
             {
-                Text      = "🎥 STICam",
+                Text      = "STICam",
                 AutoSize  = true,
                 BackColor = Color.Transparent,
                 ForeColor = Color.FromArgb(180, 255, 255, 255),
-                Font      = MakeFont(9f, FontStyle.Bold),
+                Font      = MakeFont(12f, FontStyle.Bold),
                 Padding   = new Padding(8, 4, 8, 8),
             };
             _lblLiveStats = new Label
@@ -282,34 +301,354 @@ namespace SticamHost
                 AutoSize  = true,
                 BackColor = Color.Transparent,
                 ForeColor = Color.FromArgb(180, 255, 255, 255),
-                Font      = MakeFont(8f),
+                Font      = MakeFont(10f),
                 Padding   = new Padding(8, 4, 8, 8),
             };
 
             _menuPopup = new Panel
             {
-                BackColor = Color.FromArgb(230, 30, 30, 30),
-                Width = 240, Height = 145, Visible = false,
+                BackColor = NavyMid,
+                Width = 260, Height = 180, Visible = false,
             };
-            _menuDisconnect = MakeFlyoutButton("■  Disconnect", Color.FromArgb(220, 60, 60));
-            _menuVirtualCam = MakeFlyoutButton("▶  Start Virtual Webcam", Color.FromArgb(50, 160, 80));
-            _menuMirror     = MakeFlyoutButton("🪞  Mirror Video", Color.FromArgb(50, 150, 200));
-            _menuVcamStatus = new Label
+            _menuDisconnect   = MakeFlyoutButton("■  Disconnect", Color.FromArgb(220, 60, 60));
+            _menuVirtualCam   = MakeFlyoutButton("▶  Start Virtual Webcam", Color.FromArgb(50, 160, 80));
+            _menuFaceTracking = MakeFlyoutButton("🤖  AI Face Tracking: Off", Color.FromArgb(180, 180, 180));
+            _menuMirror       = MakeFlyoutButton("🪞  Mirror Video", Color.FromArgb(50, 150, 200));
+            _menuVcamStatus   = new Label
             {
                 Text = "", ForeColor = Color.FromArgb(160, 255, 255, 255),
-                Font = MakeFont(7.5f), AutoSize = true,
-                Padding = new Padding(8, 0, 0, 4), BackColor = Color.Transparent,
+                Font = MakeFont(8f), AutoSize = true,
+                Padding = new Padding(12, 0, 0, 8), BackColor = Color.Transparent,
+                Dock = DockStyle.Top
             };
 
-            _menuDisconnect.Click += (_, _) => { HideMenuPopup(); OnDisconnect(null, EventArgs.Empty); };
-            _menuVirtualCam.Click += OnMenuVirtualCam;
-            _menuMirror.Click     += OnMenuMirrorToggle;
+            _menuDisconnect.Click   += (_, _) => { HideMenuPopup(); OnDisconnect(null, EventArgs.Empty); };
+            _menuVirtualCam.Click   += OnMenuVirtualCam;
+            _menuFaceTracking.Click += OnMenuFaceTrackingToggle;
+            _menuMirror.Click       += OnMenuMirrorToggle;
 
-            _menuPopup.Controls.Add(_menuVcamStatus);
             _menuPopup.Controls.Add(_menuMirror);
+            _menuPopup.Controls.Add(_menuFaceTracking);
+            _menuPopup.Controls.Add(_menuVcamStatus);
             _menuPopup.Controls.Add(_menuVirtualCam);
             _menuPopup.Controls.Add(_menuDisconnect);
 
+            _menuPopup.Height = 200; // slightly taller to accommodate the bigger buttons
+
+            // ── CAMERA CONTROL SIDE PANEL ─────────────────────────────────────
+            _panelControls = new Panel
+            {
+                Dock      = DockStyle.Right,
+                Width     = 220,
+                BackColor = NavyDark,
+                Visible   = false
+            };
+            _panelControls.Paint += (s, e) =>
+            {
+                // Draw a sleek left border to separate it from the video feed
+                using (var pen = new Pen(TealAccent, 2))
+                {
+                    e.Graphics.DrawLine(pen, 0, 0, 0, _panelControls.Height);
+                }
+            };
+
+            _lblControlsTitle = new Label
+            {
+                Text      = "CAMERA CONTROL",
+                Font      = MakeFont(12f, FontStyle.Bold),
+                ForeColor = TealAccent,
+                Location  = new Point(12, 16),
+                AutoSize  = true,
+                BackColor = Color.Transparent
+            };
+            _panelControls.Controls.Add(_lblControlsTitle);
+
+            int yOffset = 55;
+            int spacing = 60;
+
+            // Slider: Zoom
+            _sliderZoom = new SticamSlider
+            {
+                Label      = "ZOOM LEVEL",
+                Min        = 1.0f,
+                Max        = 8.0f,
+                Value      = 1.0f,
+                Font       = MakeFont(10f),
+                ValueText  = "1.0x",
+                Location   = new Point(12, yOffset),
+                Width      = 196,
+                BackColor  = Color.Transparent
+            };
+            _sliderZoom.ValueChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                _sliderZoom.ValueText = $"{_sliderZoom.Value:F1}x";
+                _receiver?.SendCameraControl(iso: null, brightness: null, focus: null, zoom: _sliderZoom.Value);
+            };
+            _panelControls.Controls.Add(_sliderZoom);
+            yOffset += spacing;
+
+            // Slider: Exposure
+            _sliderExposure = new SticamSlider
+            {
+                Label      = "EXPOSURE COMP",
+                Min        = -4.0f,
+                Max        = 4.0f,
+                Value      = 0.0f,
+                ValueText  = "0",
+                Font       = MakeFont(10f),
+                Location   = new Point(12, yOffset),
+                Width      = 196,
+                BackColor  = Color.Transparent
+            };
+            _sliderExposure.ValueChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                int val = (int)Math.Round(_sliderExposure.Value);
+                _sliderExposure.ValueText = val > 0 ? $"+{val}" : $"{val}";
+                _receiver?.SendCameraControl(iso: null, brightness: (float)val, focus: null);
+            };
+            _panelControls.Controls.Add(_sliderExposure);
+            yOffset += spacing;
+
+            // Checkbox: Auto ISO
+            _chkAutoIso = new CheckBox
+            {
+                Text = "AUTO ISO",
+                Font = MakeFont(9.5f),
+                ForeColor = TextWhite,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(12, yOffset),
+                Width = 196,
+                Height = 24,
+                Cursor = Cursors.Hand,
+                Checked = true
+            };
+            _chkAutoIso.FlatAppearance.CheckedBackColor = TealAccent;
+            _chkAutoIso.CheckedChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                if (_chkAutoIso.Checked) {
+                    _sliderIso.ValueText = "AUTO";
+                    _receiver?.SendCameraControl(iso: -1, brightness: null, focus: null);
+                } else {
+                    int val = (int)_sliderIso.Value;
+                    _sliderIso.ValueText = $"{val}";
+                    _receiver?.SendCameraControl(iso: val, brightness: null, focus: null);
+                }
+            };
+            _panelControls.Controls.Add(_chkAutoIso);
+            yOffset += 30; // Shorter spacing for checkbox
+
+            // Slider: ISO Sensitivity
+            _sliderIso = new SticamSlider
+            {
+                Label      = "ISO SENSITIVITY",
+                Min        = 0f,
+                Max        = 3200f,
+                Value      = 0f,
+                ValueText  = "AUTO",
+                Font       = MakeFont(10f),
+                Location   = new Point(12, yOffset),
+                Width      = 196,
+                BackColor  = Color.Transparent
+            };
+            _sliderIso.ValueChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                int val = (int)_sliderIso.Value;
+                
+                // If user drags the slider, automatically turn off Auto ISO
+                if (_chkAutoIso.Checked) {
+                    _isSyncing = true;
+                    _chkAutoIso.Checked = false;
+                    _isSyncing = false;
+                }
+                
+                _sliderIso.ValueText = $"{val}";
+                _receiver?.SendCameraControl(iso: val, brightness: null, focus: null);
+            };
+            _panelControls.Controls.Add(_sliderIso);
+            yOffset += spacing;
+
+            // Checkbox: Auto Focus
+            _chkAutoFocus = new CheckBox
+            {
+                Text = "AUTO FOCUS",
+                Font = MakeFont(9.5f),
+                ForeColor = TextWhite,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(12, yOffset),
+                Width = 196,
+                Height = 24,
+                Cursor = Cursors.Hand,
+                Checked = true
+            };
+            _chkAutoFocus.FlatAppearance.CheckedBackColor = TealAccent;
+            _chkAutoFocus.CheckedChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                if (_chkAutoFocus.Checked) {
+                    _sliderFocus.ValueText = "AUTO";
+                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: -1f);
+                } else {
+                    _sliderFocus.ValueText = $"{_sliderFocus.Value:F2}";
+                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: _sliderFocus.Value);
+                }
+            };
+            _panelControls.Controls.Add(_chkAutoFocus);
+            yOffset += 30; // Shorter spacing for checkbox
+
+            // Slider: Focus Distance
+            _sliderFocus = new SticamSlider
+            {
+                Label      = "MANUAL FOCUS",
+                Min        = 0f,
+                Max        = 1.0f,
+                Value      = 0f,
+                ValueText  = "AUTO",
+                Font       = MakeFont(10f),
+                Location   = new Point(12, yOffset),
+                Width      = 196,
+                BackColor  = Color.Transparent
+            };
+            _sliderFocus.ValueChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                if (_chkAutoFocus.Checked) {
+                    _isSyncing = true;
+                    _chkAutoFocus.Checked = false;
+                    _isSyncing = false;
+                }
+                _sliderFocus.ValueText = $"{_sliderFocus.Value:F2}";
+                _receiver?.SendCameraControl(iso: null, brightness: null, focus: _sliderFocus.Value);
+            };
+            _panelControls.Controls.Add(_sliderFocus);
+
+            yOffset += spacing;
+            _chkFlash = new CheckBox
+            {
+                Text = "FLASHLIGHT ON",
+                Font = MakeFont(10f),
+                ForeColor = TextWhite,
+                FlatStyle = FlatStyle.Flat,
+                Location = new Point(12, yOffset),
+                Width = 196,
+                Height = 24,
+                BackColor = Color.Transparent
+            };
+            _chkFlash.FlatAppearance.BorderSize = 1;
+            _chkFlash.FlatAppearance.CheckedBackColor = TealAccent;
+            _chkFlash.CheckedChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                _receiver?.SendCameraControl(iso: null, brightness: null, focus: null, zoom: null, flash: _chkFlash.Checked);
+            };
+            _panelControls.Controls.Add(_chkFlash);
+
+            yOffset += 38;
+            _lblCameraTitle = new Label
+            {
+                Text = "CAMERA SOURCE",
+                Font = MakeFont(10f),
+                ForeColor = TextDim,
+                Location = new Point(12, yOffset),
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+            _panelControls.Controls.Add(_lblCameraTitle);
+
+            yOffset += 18;
+            _cbCamera = new ComboBox
+            {
+                Location = new Point(12, yOffset),
+                Width = 196,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = NavyMid,
+                ForeColor = TextWhite,
+                FlatStyle = FlatStyle.Flat,
+                Font = MakeFont(9.5f)
+            };
+            _cbCamera.SelectedIndexChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                if (_cbCamera.SelectedItem is CameraItem item)
+                {
+                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: null, zoom: null, flash: null, cameraId: item.Id);
+                }
+            };
+            _panelControls.Controls.Add(_cbCamera);
+
+            yOffset += 38;
+            _lblResolutionTitle = new Label
+            {
+                Text = "RESOLUTION PRESET",
+                Font = MakeFont(10f),
+                ForeColor = TextDim,
+                Location = new Point(12, yOffset),
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+            _panelControls.Controls.Add(_lblResolutionTitle);
+
+            yOffset += 18;
+            _cbResolution = new ComboBox
+            {
+                Location = new Point(12, yOffset),
+                Width = 196,
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = NavyMid,
+                ForeColor = TextWhite,
+                FlatStyle = FlatStyle.Flat,
+                Font = MakeFont(9.5f)
+            };
+            _cbResolution.SelectedIndexChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                string selectedRes = _cbResolution.SelectedItem?.ToString();
+                if (!string.IsNullOrEmpty(selectedRes))
+                {
+                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: null, zoom: null, flash: null, cameraId: null, resolution: selectedRes);
+                }
+            };
+            _panelControls.Controls.Add(_cbResolution);
+            
+            yOffset += 38;
+            _lblArTitle = new Label
+            {
+                Text = "AR FILTER",
+                Font = MakeFont(10f),
+                ForeColor = TextDim,
+                Location = new Point(12, yOffset),
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+            _panelControls.Controls.Add(_lblArTitle);
+            
+            yOffset += 18;
+            _cbArFilter = new ComboBox
+            {
+                Location = new Point(12, yOffset),
+                Width = 196, // Full width again since LUT is removed
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                BackColor = NavyMid,
+                ForeColor = TextWhite,
+                FlatStyle = FlatStyle.Flat,
+                Font = MakeFont(9.5f)
+            };
+            _cbArFilter.Items.AddRange(new object[] { "None", "Crown" });
+            _cbArFilter.SelectedIndexChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                string selected = _cbArFilter.SelectedItem?.ToString();
+                if (selected != null)
+                {
+                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: null, zoom: null, flash: null, cameraId: null, resolution: null, arFilter: selected);
+                }
+            };
+            _panelControls.Controls.Add(_cbArFilter);
+
+            _liveContainer.Controls.Add(_panelControls);
             _liveContainer.Controls.Add(_videoPb);
             _liveContainer.Controls.Add(_lblWatermark);
             _liveContainer.Controls.Add(_lblLiveStats);
@@ -317,7 +656,10 @@ namespace SticamHost
             _liveContainer.Controls.Add(_btnMenu);
             _liveContainer.Controls.Add(_menuPopup);
 
+            _videoPb.SendToBack();
+
             _liveContainer.Resize += PositionOverlays;
+            _panelControls.VisibleChanged += PositionOverlays;
             _videoPb.Click       += (_, _) => HideMenuPopup();
             _videoPb.DoubleClick += (_, _) => { if (_liveContainer.Visible) ToggleCinemaMode(); };
             _lblDeviceName.Click += (_, _) => HideMenuPopup();
@@ -419,7 +761,16 @@ namespace SticamHost
         {
             if (!_liveContainer.Visible) return;
             float scale = (float)this.DeviceDpi / 96f;
-            int w = _liveContainer.Width, h = _liveContainer.Height;
+            int cw = _liveContainer.Width;
+            int w = (_panelControls != null && _panelControls.Visible) ? cw - _panelControls.Width : cw;
+            int h = _liveContainer.Height;
+
+            if (_videoPb != null)
+            {
+                _videoPb.Location = new Point(0, 0);
+                _videoPb.Size = new Size(w, h);
+            }
+
             _lblDeviceName.Location = new Point((w - _lblDeviceName.Width) / 2, (int)(12 * scale));
             _lblWatermark.Location  = new Point((int)(8 * scale), h - _lblWatermark.Height - (int)(8 * scale));
             _lblLiveStats.Location  = new Point(w - _lblLiveStats.Width - (int)(8 * scale), h - _lblLiveStats.Height - (int)(8 * scale));
@@ -441,18 +792,27 @@ namespace SticamHost
             _lblDeviceName.Text = deviceLabel;
             _idleContainer.Visible = false;
             _liveContainer.Visible = true;
+            if (_panelControls != null) _panelControls.Visible = true;
             _lblDeviceName.BringToFront();
             _btnMenu.BringToFront();
             _lblWatermark.BringToFront();
             _lblLiveStats.BringToFront();
             _menuPopup.BringToFront();
-            PositionOverlays(null, EventArgs.Empty);
 
             float scale = (float)this.DeviceDpi / 96f;
-            int minLiveWidth = (int)(860 * scale);
-            int minLiveHeight = (int)(520 * scale);
-            if (Width < minLiveWidth) Width = minLiveWidth;
-            if (Height < minLiveHeight) Height = minLiveHeight;
+            if (_currentRotation == 90 || _currentRotation == 270) // Vertical (9:16)
+            {
+                this.MinimumSize = new Size((int)(450 * scale), (int)(540 * scale));
+                if (Width < (int)(450 * scale)) Width = (int)(620 * scale);
+                if (Height < (int)(540 * scale)) Height = (int)(780 * scale);
+            }
+            else // Horizontal (16:9)
+            {
+                this.MinimumSize = new Size((int)(860 * scale), (int)(520 * scale));
+                if (Width < (int)(860 * scale)) Width = (int)(980 * scale);
+                if (Height < (int)(520 * scale)) Height = (int)(580 * scale);
+            }
+            PositionOverlays(null, EventArgs.Empty);
 
             FormBorderStyle = FormBorderStyle.Sizable;
             MaximizeBox = true;
@@ -462,10 +822,14 @@ namespace SticamHost
         private void ShowIdleMode()
         {
             HideMenuPopup();
+            if (_panelControls != null) _panelControls.Visible = false;
             _liveContainer.Visible = false;
             _idleContainer.Visible = true;
             _videoPb.Image?.Dispose();
             _videoPb.Image = null;
+            if (_chkFlash != null) _chkFlash.Checked = false;
+            if (_cbCamera != null) _cbCamera.Items.Clear();
+            if (_cbResolution != null) _cbResolution.Items.Clear();
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
 
@@ -484,6 +848,9 @@ namespace SticamHost
                 return;
             }
 
+            _faceTrackingActive = false;
+            UpdateMenuFaceTrackingButton();
+
             string host      = _rbUsb.Checked ? "127.0.0.1" : _tbIp.Text.Trim();
             bool   isUsb     = _rbUsb.Checked;
             string modeLabel = isUsb ? "[USB]" : "[Wi-Fi]";
@@ -498,31 +865,63 @@ namespace SticamHost
             _decoder = new VideoDecoder();
             _decoder.MirrorX = _mirrorVideo;
             _decoder.OnLog += _ => { };
-            _decoder.OnFrameDecoded += bmp => Invoke(() =>
+            _decoder.OnFrameDecoded += bmp =>
             {
-                var old = _videoPb.Image;
-                _videoPb.Image = (Bitmap)bmp.Clone();
-                old?.Dispose();
-                if (!_liveContainer.Visible)
+                if (IsDisposed || !IsHandleCreated) return;
+
+                Bitmap clone;
+                lock (bmp)
                 {
-                    ShowLiveMode($"Android Phone {modeLabel}");
-                    if (_chkVirtualCam.Checked)
+                    if (_currentRotation == 90 || _currentRotation == 270)
                     {
-                        StartVirtualCam();
-                        UpdateMenuVcamButton();
+                        int cropW = (bmp.Height * bmp.Height) / bmp.Width;
+                        if (cropW > bmp.Width) cropW = bmp.Width;
+                        int cropX = (bmp.Width - cropW) / 2;
+                        var cropRect = new Rectangle(cropX, 0, cropW, bmp.Height);
+                        clone = bmp.Clone(cropRect, bmp.PixelFormat);
+                    }
+                    else
+                    {
+                        clone = (Bitmap)bmp.Clone();
                     }
                 }
-            });
+
+                BeginInvoke(() =>
+                {
+                    if (IsDisposed)
+                    {
+                        clone.Dispose();
+                        return;
+                    }
+                    var old = _videoPb.Image;
+                    _videoPb.Image = clone;
+                    old?.Dispose();
+                    if (!_liveContainer.Visible)
+                    {
+                        ShowLiveMode($"Android Phone {modeLabel}");
+                        if (_chkVirtualCam.Checked)
+                        {
+                            StartVirtualCam();
+                            UpdateMenuVcamButton();
+                        }
+                    }
+                });
+            };
 
             _receiver = new H264Receiver(host, 8765);
             _receiver.OnLog += _ => { };
-            _receiver.OnCommandReceived += cmdJson => Invoke(() =>
+            _receiver.OnCommandReceived += cmdJson =>
             {
-                try
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke(() =>
                 {
+                    if (IsDisposed) return;
+                    try
+                    {
                     using var doc = JsonDocument.Parse(cmdJson);
                     var root = doc.RootElement;
-                    if (root.GetProperty("cmd").GetString() == "flip")
+                    var cmd = root.GetProperty("cmd").GetString();
+                    if (cmd == "flip")
                     {
                         _mirrorVideo = root.GetProperty("mirrorX").GetBoolean();
                         if (_decoder != null)
@@ -532,12 +931,166 @@ namespace SticamHost
                         }
                         UpdateMenuMirrorButton();
                     }
+                    else if (cmd == "face_tracking")
+                    {
+                        _faceTrackingActive = root.GetProperty("enabled").GetBoolean();
+                        UpdateMenuFaceTrackingButton();
+                    }
+                    else if (cmd == "sync_params")
+                    {
+                        _isSyncing = true;
+                        try
+                        {
+                            if (root.TryGetProperty("face_tracking", out var ftProp))
+                            {
+                                _faceTrackingActive = ftProp.GetBoolean();
+                                UpdateMenuFaceTrackingButton();
+                            }
+                            if (root.TryGetProperty("zoom", out var zoomProp))
+                            {
+                                float zoomVal = (float)zoomProp.GetDouble();
+                                _sliderZoom.Value = zoomVal;
+                                _sliderZoom.ValueText = $"{_sliderZoom.Value:F1}x";
+                            }
+                            if (root.TryGetProperty("brightness", out var brProp))
+                            {
+                                float brVal = (float)brProp.GetDouble();
+                                _sliderExposure.Value = brVal;
+                                int intBr = (int)Math.Round(brVal);
+                                _sliderExposure.ValueText = intBr > 0 ? $"+{intBr}" : $"{intBr}";
+                            }
+                            if (root.TryGetProperty("iso", out var isoProp))
+                            {
+                                int isoVal = isoProp.GetInt32();
+                                if (isoVal >= 0) {
+                                    _sliderIso.Value = isoVal;
+                                    _sliderIso.ValueText = $"{isoVal}";
+                                    _chkAutoIso.Checked = false;
+                                } else {
+                                    _sliderIso.ValueText = "AUTO";
+                                    _chkAutoIso.Checked = true;
+                                }
+                            }
+                            if (root.TryGetProperty("max_focus", out var maxFocusProp))
+                            {
+                                float maxFocus = (float)maxFocusProp.GetDouble();
+                                if (maxFocus <= 0.001f)
+                                {
+                                    _sliderFocus.Enabled = false;
+                                    _chkAutoFocus.Enabled = false;
+                                    _sliderFocus.ValueText = "FIXED FOCUS";
+                                }
+                                else
+                                {
+                                    _sliderFocus.Enabled = true;
+                                    _chkAutoFocus.Enabled = true;
+                                }
+                            }
+                            if (root.TryGetProperty("focus", out var focusProp))
+                            {
+                                float focusVal = (float)focusProp.GetDouble();
+                                if (_sliderFocus.Enabled) 
+                                {
+                                    if (focusVal < 0f)
+                                    {
+                                        _chkAutoFocus.Checked = true;
+                                        _sliderFocus.ValueText = "AUTO";
+                                    }
+                                    else
+                                    {
+                                        _chkAutoFocus.Checked = false;
+                                        _sliderFocus.Value = focusVal;
+                                        _sliderFocus.ValueText = $"{focusVal:F2}";
+                                    }
+                                }
+                            }
+                            if (root.TryGetProperty("flash", out var flashProp))
+                            {
+                                _chkFlash.Checked = flashProp.GetBoolean();
+                            }
+                            
+                            // Cameras list & selection sync
+                            if (root.TryGetProperty("cameras", out var camsProp) && root.TryGetProperty("selected_camera", out var selCamProp))
+                            {
+                                string selectedCamId = selCamProp.GetString() ?? "";
+                                _cbCamera.BeginUpdate();
+                                _cbCamera.Items.Clear();
+                                CameraItem? selectedItem = null;
+                                foreach (var camObj in camsProp.EnumerateArray())
+                                {
+                                    string cid = camObj.GetProperty("id").GetString() ?? "";
+                                    string clabel = camObj.GetProperty("label").GetString() ?? "";
+                                    var item = new CameraItem { Id = cid, Label = clabel };
+                                    _cbCamera.Items.Add(item);
+                                    if (cid == selectedCamId)
+                                    {
+                                        selectedItem = item;
+                                    }
+                                }
+                                _cbCamera.EndUpdate();
+                                if (selectedItem != null)
+                                {
+                                    _cbCamera.SelectedItem = selectedItem;
+                                }
+                            }
+
+                            // Resolutions list & selection sync
+                            if (root.TryGetProperty("resolutions", out var resListProp) && root.TryGetProperty("selected_resolution", out var selResProp))
+                            {
+                                string selectedRes = selResProp.GetString() ?? "";
+                                _cbResolution.BeginUpdate();
+                                _cbResolution.Items.Clear();
+                                int selectedIndex = -1;
+                                foreach (var resObj in resListProp.EnumerateArray())
+                                {
+                                    string resStr = resObj.GetString() ?? "";
+                                    _cbResolution.Items.Add(resStr);
+                                    if (resStr == selectedRes)
+                                    {
+                                        selectedIndex = _cbResolution.Items.Count - 1;
+                                    }
+                                }
+                                _cbResolution.EndUpdate();
+                                if (selectedIndex != -1)
+                                {
+                                    _cbResolution.SelectedIndex = selectedIndex;
+                                }
+                            }
+                            // AR and LUT Filter sync
+                            if (root.TryGetProperty("ar_filter", out var arProp))
+                            {
+                                string arStr = arProp.GetString() ?? "None";
+                                for (int i = 0; i < _cbArFilter.Items.Count; i++)
+                                {
+                                    if (_cbArFilter.Items[i].ToString() == arStr)
+                                    {
+                                        _cbArFilter.SelectedIndex = i;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (root.TryGetProperty("orientation", out var oriProp))
+                            {
+                                int rotation = oriProp.GetInt32();
+                                SetOrientation(rotation);
+                            }
+                        }
+                        finally
+                        {
+                            _isSyncing = false;
+                        }
+                    }
                 }
                 catch { }
-            });
-            _receiver.OnConnectionChanged += ok => Invoke(() =>
+                });
+            };
+            _receiver.OnConnectionChanged += ok =>
             {
-                if (!ok)
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke(() =>
+                {
+                    if (IsDisposed) return;
+                    if (!ok)
                 {
                     ShowIdleMode();
                     _btnConnect.Text = "CONNECT";
@@ -552,7 +1105,8 @@ namespace SticamHost
                     _btnConnect.BackColor = Color.FromArgb(50, 180, 130);
                 }
                 UpdateTrayMenuItems();
-            });
+                });
+            };
             _receiver.OnConfigReceived += (sps, pps) => _decoder.Start(sps, pps);
             _receiver.OnFrameReceived  += (_, args)  => _decoder.PushFrame(args.Data);
 
@@ -566,9 +1120,10 @@ namespace SticamHost
             Task.Run(async () =>
             {
                 await Task.Delay(30000);
-                if (IsDisposed) return;
-                Invoke(() =>
+                if (IsDisposed || !IsHandleCreated) return;
+                BeginInvoke(() =>
                 {
+                    if (IsDisposed) return;
                     if (_receiver == currentReceiver && !_liveContainer.Visible)
                     {
                         OnDisconnect(null, EventArgs.Empty);
@@ -589,6 +1144,9 @@ namespace SticamHost
             _receiver?.Disconnect(); _receiver = null;
             _decoder?.Stop();        _decoder  = null;
             _adb?.Stop();            _adb      = null;
+
+            _faceTrackingActive = false;
+            UpdateMenuFaceTrackingButton();
 
             _btnConnect.Enabled    = true;
             _lblLiveStats.Text     = "";
@@ -621,7 +1179,7 @@ namespace SticamHost
             int h = _videoPb.Image?.Height ?? 720;
             _vcam = new VirtualCameraManager(w, h, fps: 30);
             _vcam.OnLog += _ => { };
-            _decoder.OnFrameDecoded += _vcam.PushFrame;
+            _decoder.OnFrameDecoded += OnVcamFrameDecoded;
             string result = _vcam.Start();
             _vcamActive = true;
             _menuVcamStatus.Text = result;
@@ -631,7 +1189,7 @@ namespace SticamHost
         {
             if (!_vcamActive) return;
             if (_decoder != null && _vcam != null)
-                _decoder.OnFrameDecoded -= _vcam.PushFrame;
+                _decoder.OnFrameDecoded -= OnVcamFrameDecoded;
             _vcam?.Stop(); _vcam = null;
             _vcamActive = false;
             _menuVcamStatus.Text = "";
@@ -657,6 +1215,19 @@ namespace SticamHost
             _menuMirror.ForeColor = _mirrorVideo ? Color.FromArgb(220, 160, 40) : Color.FromArgb(50, 150, 200);
         }
 
+        private void OnMenuFaceTrackingToggle(object? s, EventArgs e)
+        {
+            _faceTrackingActive = !_faceTrackingActive;
+            _receiver?.SendFaceTracking(_faceTrackingActive);
+            UpdateMenuFaceTrackingButton();
+        }
+
+        private void UpdateMenuFaceTrackingButton()
+        {
+            _menuFaceTracking.Text = _faceTrackingActive ? "🤖  AI Face Tracking: On" : "🤖  AI Face Tracking: Off";
+            _menuFaceTracking.ForeColor = _faceTrackingActive ? Color.FromArgb(30, 204, 145) : Color.FromArgb(180, 180, 180);
+        }
+
         // ── Helpers ──────────────────────────────────────────────────────────
 
         private Button MakeFlyoutButton(string text, Color fg)
@@ -664,14 +1235,62 @@ namespace SticamHost
             var b = new Button
             {
                 Text = text, ForeColor = fg, BackColor = Color.Transparent,
-                FlatStyle = FlatStyle.Flat, Height = 34, Dock = DockStyle.Top,
-                Font = MakeFont(9f, FontStyle.Bold),
+                FlatStyle = FlatStyle.Flat, Height = 38, Dock = DockStyle.Top,
+                Font = MakeFont(11f, FontStyle.Bold),
                 TextAlign = ContentAlignment.MiddleLeft,
                 Cursor = Cursors.Hand, Padding = new Padding(8, 0, 0, 0),
             };
             b.FlatAppearance.BorderSize = 0;
             b.FlatAppearance.MouseOverBackColor = Color.FromArgb(60, 255, 255, 255);
             return b;
+        }
+
+        private void SetOrientation(int rotation)
+        {
+            if (_currentRotation == rotation) return;
+            _currentRotation = rotation;
+
+            float scale = (float)this.DeviceDpi / 96f;
+
+            if (_currentRotation == 90 || _currentRotation == 270) // Vertical mode (9:16)
+            {
+                this.MinimumSize = new Size((int)(450 * scale), (int)(540 * scale));
+                if (this.WindowState == FormWindowState.Normal)
+                {
+                    this.Size = new Size((int)(620 * scale), (int)(780 * scale));
+                }
+            }
+            else // Horizontal mode (16:9)
+            {
+                this.MinimumSize = new Size((int)(860 * scale), (int)(520 * scale));
+                if (this.WindowState == FormWindowState.Normal)
+                {
+                    this.Size = new Size((int)(980 * scale), (int)(580 * scale));
+                }
+            }
+            
+            PositionOverlays(null, EventArgs.Empty);
+        }
+
+        private void OnVcamFrameDecoded(Bitmap bmp)
+        {
+            if (_vcam == null) return;
+            
+            if (_currentRotation == 90 || _currentRotation == 270) // Vertical mode, crop the frame!
+            {
+                int cropW = (bmp.Height * bmp.Height) / bmp.Width;
+                if (cropW > bmp.Width) cropW = bmp.Width;
+                int cropX = (bmp.Width - cropW) / 2;
+                var cropRect = new Rectangle(cropX, 0, cropW, bmp.Height);
+                using (Bitmap cropped = bmp.Clone(cropRect, bmp.PixelFormat))
+                {
+                    _vcam.PushFrame(cropped);
+                }
+            }
+            else
+            {
+                _vcam.PushFrame(bmp);
+            }
         }
 
         private void ToggleCinemaMode()
@@ -688,6 +1307,7 @@ namespace SticamHost
                 _lblDeviceName.Visible = false;
                 _lblWatermark.Visible  = false;
                 _lblLiveStats.Visible  = false;
+                if (_panelControls != null) _panelControls.Visible = false;
                 HideMenuPopup();
             }
             else
@@ -699,6 +1319,7 @@ namespace SticamHost
                 _lblDeviceName.Visible = true;
                 _lblWatermark.Visible  = true;
                 _lblLiveStats.Visible  = true;
+                if (_panelControls != null) _panelControls.Visible = true;
             }
         }
 
@@ -715,6 +1336,7 @@ namespace SticamHost
             OnDisconnect(null, EventArgs.Empty);
             _notifyIcon.Dispose();
             base.OnFormClosing(e);
+            Environment.Exit(0);
         }
 
         private static string GetLocalIpAddress()
@@ -860,5 +1482,137 @@ namespace SticamHost
                 _notifyIcon.ShowBalloonTip(3000, "STICam Minimized", "STICam is running in the system tray. Double-click the icon to restore.", ToolTipIcon.Info);
             }
         }
+    }
+
+    public class SticamSlider : Control
+    {
+        private float _value = 0f;
+        private float _min = 0f;
+        private float _max = 1f;
+        private string _label = "";
+        private string _valStr = "";
+        private bool _isDragging = false;
+
+        public event EventHandler? ValueChanged;
+
+        public float Value
+        {
+            get => _value;
+            set
+            {
+                float clamped = Math.Max(_min, Math.Min(_max, value));
+                if (Math.Abs(_value - clamped) > 0.0001f)
+                {
+                    _value = clamped;
+                    Invalidate();
+                }
+            }
+        }
+
+        public float Min { get => _min; set { _min = value; Invalidate(); } }
+        public float Max { get => _max; set { _max = value; Invalidate(); } }
+        public string Label { get => _label; set { _label = value; Invalidate(); } }
+        public string ValueText { get => _valStr; set { _valStr = value; Invalidate(); } }
+
+        public SticamSlider()
+        {
+            SetStyle(ControlStyles.SupportsTransparentBackColor, true);
+            DoubleBuffered = true;
+            Height = 45;
+            Cursor = Cursors.Hand;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+
+            // Draw label & value text
+            using (var brushLabel = new SolidBrush(Color.FromArgb(240, 240, 240)))
+            using (var brushVal = new SolidBrush(Color.FromArgb(30, 204, 145)))
+            {
+                g.DrawString(_label, this.Font, brushLabel, 2, 0);
+                g.DrawString(_valStr, this.Font, brushVal, Width - g.MeasureString(_valStr, this.Font).Width - 2, 0);
+            }
+
+            // Draw track line
+            int trackY = 28;
+            int trackH = 4;
+            int margin = 10;
+            int trackW = Width - 2 * margin;
+
+            using (var penBg = new Pen(Color.FromArgb(26, 42, 64), trackH)) // NavyMid
+            {
+                penBg.StartCap = System.Drawing.Drawing2D.LineCap.Round;
+                penBg.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                g.DrawLine(penBg, margin, trackY, Width - margin, trackY);
+            }
+
+            // Draw active portion
+            float pct = (_max - _min) > 0 ? (_value - _min) / (_max - _min) : 0;
+            int activeX = margin + (int)(pct * trackW);
+
+            if (pct > 0)
+            {
+                using (var penAct = new Pen(Color.FromArgb(30, 204, 145), trackH)) // TealAccent
+                {
+                    penAct.StartCap = System.Drawing.Drawing2D.LineCap.Round;
+                    penAct.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                    g.DrawLine(penAct, margin, trackY, activeX, trackY);
+                }
+            }
+
+            // Draw thumb circle
+            int thumbRadius = 7;
+            using (var brushThumb = new SolidBrush(Color.White))
+            {
+                g.FillEllipse(brushThumb, activeX - thumbRadius, trackY - thumbRadius, thumbRadius * 2, thumbRadius * 2);
+            }
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                _isDragging = true;
+                UpdateValueFromMouse(e.X);
+            }
+            base.OnMouseDown(e);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            if (_isDragging)
+            {
+                UpdateValueFromMouse(e.X);
+            }
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            _isDragging = false;
+            base.OnMouseUp(e);
+        }
+
+        private void UpdateValueFromMouse(int mouseX)
+        {
+            int margin = 10;
+            int trackW = Width - 2 * margin;
+            if (trackW <= 0) return;
+
+            float pct = (float)(mouseX - margin) / trackW;
+            pct = Math.Max(0f, Math.Min(1f, pct));
+            Value = _min + pct * (_max - _min);
+            ValueChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    public class CameraItem
+    {
+        public string Id { get; set; } = "";
+        public string Label { get; set; } = "";
+        public override string ToString() => Label;
     }
 }
