@@ -57,6 +57,7 @@ class StreamServer(
     /** Fired when SPS and PPS are extracted. Used by ViewModel to enable recording. */
     var onConfigData: ((sps: ByteArray, pps: ByteArray) -> Unit)? = null
     var onSignalStrengthChanged: ((bars: Int) -> Unit)? = null
+    var onParamsChangedFromHost: ((zoom: Float?, faceTracking: Boolean?, iso: Int?, brightness: Float?, focus: Float?, flash: Boolean?, cameraId: String?, resolution: String?, arFilter: String?, lutFilter: String?) -> Unit)? = null
 
     fun sendCommand(json: String) {
         val out = clientOutput ?: return
@@ -101,8 +102,10 @@ class StreamServer(
                 } catch (e: Exception) {
                     if (isActive) {
                         Log.e(TAG, "Connection error: ${e.message}")
-                        delay(2000)
                     }
+                }
+                if (isActive) {
+                    delay(2000)
                 }
             }
         }
@@ -289,13 +292,27 @@ class StreamServer(
     }
 
     private fun handleCommand(json: String) {
+        Log.i(TAG, "Received command from host: $json")
         try {
             val obj = JSONObject(json)
             when (obj.optString("cmd")) {
                 "set_params" -> {
-                    // Auto mode: only zoom is remotely adjustable
-                    if (obj.has("zoom")) engine.setZoom(obj.getDouble("zoom").toFloat())
-                    Log.d(TAG, "Params updated from host: $json")
+                    val zoom = if (obj.has("zoom")) obj.getDouble("zoom").toFloat() else null
+                    val faceTracking = if (obj.has("face_tracking")) obj.getBoolean("face_tracking") else null
+                    val iso = if (obj.has("iso")) obj.getInt("iso") else null
+                    val brightness = if (obj.has("brightness")) obj.getDouble("brightness").toFloat() else null
+                    val focus = if (obj.has("focus")) obj.getDouble("focus").toFloat() else null
+                    val flash = if (obj.has("flash")) obj.getBoolean("flash") else null
+                    val cameraId = if (obj.has("camera_id")) obj.getString("camera_id") else null
+                    val resolution = if (obj.has("resolution")) obj.getString("resolution") else null
+                    val arFilter = if (obj.has("ar_filter")) obj.getString("ar_filter") else null
+                    val lutFilter = if (obj.has("lut_filter")) obj.getString("lut_filter") else null
+                    
+                    if (zoom != null || faceTracking != null || iso != null || brightness != null || focus != null || flash != null || cameraId != null || resolution != null || arFilter != null || lutFilter != null) {
+                        scope?.launch(Dispatchers.Main) {
+                            onParamsChangedFromHost?.invoke(zoom, faceTracking, iso, brightness, focus, flash, cameraId, resolution, arFilter, lutFilter)
+                        }
+                    }
                 }
                 "request_idr" -> engine.requestKeyFrame()
                 else -> Log.w(TAG, "Unknown cmd: $json")

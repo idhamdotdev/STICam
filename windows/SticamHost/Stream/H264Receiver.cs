@@ -124,6 +124,36 @@ namespace SticamHost.Stream
             SendCommand(json);
         }
 
+        public void SendFaceTracking(bool enabled)
+        {
+            var json = JsonSerializer.Serialize(new
+            {
+                cmd           = "set_params",
+                face_tracking = enabled
+            });
+            SendCommand(json);
+        }
+
+        public void SendCameraControl(int? iso, float? brightness, float? focus, float? zoom = null, bool? flash = null, string? cameraId = null, string? resolution = null, string? arFilter = null, string? lutFilter = null)
+        {
+            var payload = new System.Collections.Generic.Dictionary<string, object>
+            {
+                { "cmd", "set_params" }
+            };
+            if (iso.HasValue) payload["iso"] = iso.Value;
+            if (brightness.HasValue) payload["brightness"] = brightness.Value;
+            if (focus.HasValue) payload["focus"] = focus.Value;
+            if (zoom.HasValue) payload["zoom"] = zoom.Value;
+            if (flash.HasValue) payload["flash"] = flash.Value;
+            if (!string.IsNullOrEmpty(cameraId)) payload["camera_id"] = cameraId;
+            if (!string.IsNullOrEmpty(resolution)) payload["resolution"] = resolution;
+            if (!string.IsNullOrEmpty(arFilter)) payload["ar_filter"] = arFilter;
+            if (!string.IsNullOrEmpty(lutFilter)) payload["lut_filter"] = lutFilter;
+
+            var json = JsonSerializer.Serialize(payload);
+            SendCommand(json);
+        }
+
         public void RequestKeyFrame() => SendCommand("{\"cmd\":\"request_idr\"}");
 
         // ── Receive loop ──────────────────────────────────────────────────────

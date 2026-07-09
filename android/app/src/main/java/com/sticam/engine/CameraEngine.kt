@@ -14,7 +14,28 @@ import android.util.Log
 import android.util.Range
 import android.util.Size
 import android.view.Surface
+import com.sticam.engine.gl.GlRenderer
 import androidx.annotation.RequiresPermission
+import android.graphics.PointF
+import android.graphics.Rect
+import android.media.ImageReader
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.Face
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.face.FaceLandmark
+import android.graphics.RectF
+
+data class ArFaceData(
+    val bounds: RectF, // Normalized 0.0 - 1.0 relative to visible screen
+    val leftEye: PointF?,
+    val rightEye: PointF?,
+    val noseBase: PointF?,
+    val mouthBottom: PointF?,
+    val leftCheek: PointF?,
+    val rightCheek: PointF?
+)
 
 /**
  * Sticam Camera Engine — zero-copy Camera2→MediaCodec H.264 pipeline.
@@ -40,6 +61,121 @@ class CameraEngine(private val context: Context) {
     private var camHandler: Handler? = null
     private var encThread: HandlerThread? = null
     private var encHandler: Handler? = null
+    
+    private var detectThread: HandlerThread? = null
+    private var detectHandler: Handler? = null
+    
+    // OpenGL LUT Pipeline
+    private var glRenderer: GlRenderer? = null
+    private var currentPreviewSurface: Surface? = null
+    var activeLutFilter: String = "None"
+        set(value) {
+            val wasZeroCopy = (field == "None" && activeArFilter == "None")
+            field = value
+            val isZeroCopy = (field == "None" && activeArFilter == "None")
+            if (wasZeroCopy != isZeroCopy) {
+                // We need to re-create the session!
+                camHandler?.post {
+                    session?.close()
+                    session = null
+                    camDevice?.let { createSession(it, currentPreviewSurface) }
+                }
+            } else if (!isZeroCopy) {
+                // Just update the LUT!
+                glRenderer?.setFilter(value)
+            }
+        }
+
+    var activeArFilter: String = "None"
+        set(value) {
+            val wasZeroCopy = (activeLutFilter == "None" && field == "None")
+            field = value
+            val isZeroCopy = (activeLutFilter == "None" && field == "None")
+            if (wasZeroCopy != isZeroCopy) {
+                camHandler?.post {
+                    session?.close()
+                    session = null
+                    camDevice?.let { createSession(it, currentPreviewSurface) }
+                }
+            } else if (!isZeroCopy) {
+                glRenderer?.setArFilter(value)
+            }
+        }
+
+    // Orientation & Dimensions
+    @Volatile var isFrontCamera: Boolean = false
+    @Volatile var outputRotation: Int = 0
+    @Volatile var gravityRotation: Int = 0
+    @Volatile var outW: Int = 1920
+    @Volatile var outH: Int = 1080
+    var onOrientationChanged: (() -> Unit)? = null
+    private var orientationListener: android.view.OrientationEventListener? = null
+
+    // AI Face Tracking
+    private var imageReader: ImageReader? = null
+    private var faceDetector: FaceDetector? = null
+    private val isDetectorBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val currentCropCenter = PointF()
+    private var currentCropZoom = 1.0f
+    @Volatile private var activeFaceCropRect: Rect? = null
+    @Volatile private var lastAppliedCropRect: Rect? = null
+    var onFaceZoomChanged: ((zoom: Float) -> Unit)? = null
+    var onArFaceDataUpdated: ((ArFaceData?) -> Unit)? = null
+    private var lastUpdateTime = 0L
+
+    private var targetCenterX = 0f
+    private var targetCenterY = 0f
+    private var targetZoom = 1.0f
+    private var noFaceDetectedFramesCount = 0
+    private var consecutiveFaceFrames = 0
+    private var isInitialEngage = false
+
+    var isFaceTrackingEnabled: Boolean = false
+        set(value) {
+            field = value
+            camHandler?.post {
+                val full = sensorRect ?: return@post
+                if (value) {
+                    if (currentCropCenter.x == 0f && currentCropCenter.y == 0f) {
+                        currentCropCenter.set(full.centerX().toFloat(), full.centerY().toFloat())
+                    }
+                    targetCenterX = currentCropCenter.x
+                    targetCenterY = currentCropCenter.y
+                    targetZoom = currentCropZoom
+                    noFaceDetectedFramesCount = 0
+                    consecutiveFaceFrames = 0
+                    isInitialEngage = true
+                    lastAppliedCropRect = null
+                    camHandler?.removeCallbacks(faceTrackingUpdateRunnable)
+                    camHandler?.post(faceTrackingUpdateRunnable)
+                } else {
+                    targetCenterX = full.centerX().toFloat()
+                    targetCenterY = full.centerY().toFloat()
+                    targetZoom = 1.0f
+                    // Do not remove callbacks — let tickFaceTracking lerp us back smoothly.
+                }
+            }
+        }
+
+    private val faceTrackingUpdateRunnable = object : Runnable {
+        override fun run() {
+            if (session != null && reqBuilder != null) {
+                val full = sensorRect
+                if (full != null) {
+                    val isLerpingBack = !isFaceTrackingEnabled && 
+                        (Math.abs(currentCropZoom - 1.0f) > 0.01f || 
+                         Math.abs(currentCropCenter.x - full.centerX()) > 5f || 
+                         Math.abs(currentCropCenter.y - full.centerY()) > 5f)
+                         
+                    if (isFaceTrackingEnabled || isLerpingBack) {
+                        tickFaceTracking()
+                        camHandler?.postDelayed(this, 33)
+                        return
+                    }
+                }
+            }
+        }
+    }
 
     // Hardware capabilities (populated when camera opens)
     var captureSize: Size = Size(1920, 1080); private set
@@ -54,6 +190,9 @@ class CameraEngine(private val context: Context) {
     private var bestFpsRange: Range<Int>? = null
     var aeRange: Range<Int> = Range(0, 0); private set
     @Volatile var curExposure: Int = 0
+
+    var maxFocusDistance: Float = 10f; private set
+    @Volatile private var manualFocusDistance: Float = 0f
 
     @Volatile private var manualIso: Int = 0
     @Volatile private var lastExposureTimeNs: Long = 33_333_333L // ~1/30s baseline
@@ -100,8 +239,43 @@ class CameraEngine(private val context: Context) {
         Log.i(TAG, "Start: cam=$cameraId ${width}x${height}@${fps}fps")
         activePreviewSurface = previewSurface
 
+        activeFaceCropRect = null
+        currentCropCenter.set(0f, 0f)
+        currentCropZoom = 1f
+        targetCenterX = 0f
+        targetCenterY = 0f
+        targetZoom = 1f
+        noFaceDetectedFramesCount = 0
+        isFaceTrackingEnabled = false
+
         val chars = camMgr.getCameraCharacteristics(cameraId)
+        isFrontCamera = chars.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT
         readChars(chars, width, height, fps)
+
+        outW = captureSize.width
+        outH = captureSize.height
+
+        // Automated OrientationEventListener disabled to support manual button-driven orientation lock
+        /*
+        if (orientationListener == null) {
+            orientationListener = object : android.view.OrientationEventListener(context) {
+                override fun onOrientationChanged(orientation: Int) {
+                    if (orientation == ORIENTATION_UNKNOWN) return
+                    val rotation = when (orientation) {
+                        in 45 until 135 -> 270
+                        in 135 until 225 -> 180
+                        in 225 until 315 -> 90
+                        else -> 0
+                    }
+                    if (rotation != gravityRotation) {
+                        gravityRotation = rotation
+                        onOrientationChanged?.invoke()
+                    }
+                }
+            }
+            orientationListener?.enable()
+        }
+        */
 
         if (camThread == null) {
             camThread = HandlerThread("SticamCam").also { it.start() }
@@ -111,13 +285,21 @@ class CameraEngine(private val context: Context) {
             encThread = HandlerThread("SticamEnc").also { it.start() }
             encHandler = Handler(encThread!!.looper)
         }
+        if (detectThread == null) {
+            detectThread = HandlerThread("SticamDetect").also { it.start() }
+            detectHandler = Handler(detectThread!!.looper)
+        }
 
+        setupImageReader(chars, captureSize.width, captureSize.height)
         setupEncoder(captureSize.width, captureSize.height, fps, bitrateMbps * 1_000_000)
         openCamera(cameraId, previewSurface)
     }
 
     fun stop(keepThreads: Boolean = false) {
         activePreviewSurface = null
+        orientationListener?.disable()
+        orientationListener = null
+
         runCatching { session?.stopRepeating() }
         session?.close(); session = null
         camDevice?.close(); camDevice = null
@@ -129,11 +311,17 @@ class CameraEngine(private val context: Context) {
         encoder = null
         encSurface?.release(); encSurface = null
         
+        imageReader?.close(); imageReader = null
+        faceDetector?.close(); faceDetector = null
+        isDetectorBusy.set(false)
+        
         if (!keepThreads) {
             camThread?.quitSafely();     camThread     = null
             camHandler = null
             encThread?.quitSafely();     encThread     = null
             encHandler = null
+            detectThread?.quitSafely();  detectThread  = null
+            detectHandler = null
         }
     }
 
@@ -151,6 +339,13 @@ class CameraEngine(private val context: Context) {
         Log.i(TAG, "Camera resumed")
     }
 
+    fun setManualRotation(rotationDegrees: Int) {
+        outputRotation = rotationDegrees
+        gravityRotation = rotationDegrees
+        glRenderer?.rotationDegrees = rotationDegrees
+        onOrientationChanged?.invoke()
+    }
+
     /** Set digital zoom ratio (1.0 = wide, maxZoom = full tele). Thread-safe. */
     fun setZoom(ratio: Float) {
         curZoom = ratio.coerceIn(1f, maxZoom)
@@ -163,6 +358,13 @@ class CameraEngine(private val context: Context) {
     /** Compute and apply the SCALER_CROP_REGION for the current zoom level. */
     private fun applyZoomRect(b: CaptureRequest.Builder) {
         val full = sensorRect ?: return
+        if (isFaceTrackingEnabled) {
+            val faceRect = activeFaceCropRect
+            if (faceRect != null) {
+                b.set(SCALER_CROP_REGION, faceRect)
+                return
+            }
+        }
         if (curZoom <= 1f) { b.set(SCALER_CROP_REGION, full); return }
         val cropW = (full.width()  / curZoom).toInt()
         val cropH = (full.height() / curZoom).toInt()
@@ -201,13 +403,15 @@ class CameraEngine(private val context: Context) {
             ?: ranges?.firstOrNull()
 
         c.get(CONTROL_AE_COMPENSATION_RANGE)?.let { aeRange = it }
+        c.get(LENS_INFO_MINIMUM_FOCUS_DISTANCE)?.let { maxFocusDistance = it }
 
-        Log.i(TAG, "Caps: Size=$captureSize SensorOrientation=$sensorOrientation MaxZoom=$maxZoom SensorRect=$sensorRect BestFpsRange=$bestFpsRange AeRange=$aeRange")
+        Log.i(TAG, "Caps: ReqRes=${maxW}x${maxH} ActualRes=$captureSize SensorOrientation=$sensorOrientation MaxZoom=$maxZoom SensorRect=$sensorRect BestFpsRange=$bestFpsRange AeRange=$aeRange MaxFocusDistance=$maxFocusDistance")
         onCharacteristicsReady?.invoke()
     }
 
     @RequiresPermission(Manifest.permission.CAMERA)
     private fun openCamera(id: String, preview: Surface?) {
+        currentPreviewSurface = preview
         camMgr.openCamera(id, object : CameraDevice.StateCallback() {
             override fun onOpened(cam: CameraDevice) {
                 camDevice = cam
@@ -220,27 +424,70 @@ class CameraEngine(private val context: Context) {
 
     private fun createSession(cam: CameraDevice, preview: Surface?) {
         val outputs = mutableListOf<Surface>()
-        preview?.let { outputs.add(it) }
-        encSurface?.let { outputs.add(it) } ?: return
+        
+        // Clean up old GL renderer
+        glRenderer?.release()
+        glRenderer = null
 
-        cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
-            override fun onConfigured(s: CameraCaptureSession) {
-                session = s
-                startRepeating(s, preview)
+        val enc = encSurface ?: return
+        imageReader?.surface?.let { outputs.add(it) }
+
+        if (activeLutFilter == "None" && activeArFilter == "None") {
+            // ZERO-COPY PATH
+            preview?.let { outputs.add(it) }
+            outputs.add(enc)
+            
+            cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(s: CameraCaptureSession) {
+                    session = s
+                    try {
+                        startRepeating(s, preview, true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to start repeating request (Camera already closed?)", e)
+                    }
+                }
+                override fun onConfigureFailed(s: CameraCaptureSession) {
+                    Log.e(TAG, "Session config failed")
+                }
+            }, camHandler)
+        } else {
+            // GL LUT/AR PATH
+            if (preview != null) {
+                val cw = captureSize.width
+                val ch = captureSize.height
+                glRenderer = GlRenderer(preview, enc, cw, ch, outW, outH, outputRotation) { glInputSurface ->
+                    glRenderer?.setFilter(activeLutFilter)
+                    glRenderer?.setArFilter(activeArFilter)
+                    outputs.add(glInputSurface)
+                    cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
+                        override fun onConfigured(s: CameraCaptureSession) {
+                            session = s
+                            glRenderer?.attachWindowSurfaces()
+                            try {
+                                startRepeating(s, glInputSurface, false)
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Failed to start repeating request", e)
+                            }
+                        }
+                        override fun onConfigureFailed(s: CameraCaptureSession) {
+                            Log.e(TAG, "Session config failed")
+                        }
+                    }, camHandler)
+                }
             }
-            override fun onConfigureFailed(s: CameraCaptureSession) {
-                Log.e(TAG, "Session config failed")
-            }
-        }, camHandler)
+        }
     }
 
     @Volatile var isFocusLocked = false
     @Volatile private var isFlashActive = false
 
-    private fun startRepeating(s: CameraCaptureSession, preview: Surface?) {
+    private fun startRepeating(s: CameraCaptureSession, previewOrGlSurface: Surface?, isZeroCopy: Boolean) {
         val b = camDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-            preview?.let { addTarget(it) }
-            encSurface?.let { addTarget(it) }
+            previewOrGlSurface?.let { addTarget(it) }
+            if (isZeroCopy) {
+                encSurface?.let { addTarget(it) }
+            }
+            imageReader?.surface?.let { addTarget(it) }
 
             // ── Auto/Manual Exposure modes ──────────────────
             set(CONTROL_MODE,         CaptureRequest.CONTROL_MODE_AUTO)
@@ -258,7 +505,10 @@ class CameraEngine(private val context: Context) {
             // Force 30 FPS lock if possible to eliminate laggy slideshows
             bestFpsRange?.let { set(CONTROL_AE_TARGET_FPS_RANGE, it) }
 
-            if (isFocusLocked) {
+            if (this@CameraEngine.manualFocusDistance > 0f) {
+                set(CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                set(LENS_FOCUS_DISTANCE, this@CameraEngine.manualFocusDistance)
+            } else if (isFocusLocked) {
                 set(CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_AUTO)
                 if (this@CameraEngine.manualIso <= 0) {
                     set(CONTROL_AE_LOCK, true)
@@ -375,6 +625,22 @@ class CameraEngine(private val context: Context) {
         }
         runCatching { s.setRepeatingRequest(b.build(), captureCallback, camHandler) }
         Log.i(TAG, "Manual ISO set: $iso (AE OFF: ${iso > 0})")
+     }
+
+     fun setFocusDistance(value: Float) {
+        val s = session ?: return
+        val b = reqBuilder ?: return
+        if (value > 0f) {
+            val dist = value * maxFocusDistance
+            manualFocusDistance = dist
+            b.set(CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+            b.set(LENS_FOCUS_DISTANCE, dist)
+        } else {
+            manualFocusDistance = 0f
+            b.set(CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
+        }
+        runCatching { s.setRepeatingRequest(b.build(), captureCallback, camHandler) }
+        Log.i(TAG, "Manual focus distance updated: $manualFocusDistance (value: $value)")
      }
 
     fun triggerTapToFocus(xNormalized: Float, yNormalized: Float, viewWidth: Int, viewHeight: Int) {
@@ -499,12 +765,14 @@ class CameraEngine(private val context: Context) {
 
         enc.setCallback(object : MediaCodec.Callback() {
             override fun onOutputBufferAvailable(c: MediaCodec, i: Int, info: MediaCodec.BufferInfo) {
-                if (info.size <= 0) { c.releaseOutputBuffer(i, false); return }
-                val buf = c.getOutputBuffer(i) ?: run { c.releaseOutputBuffer(i, false); return }
-                val data = ByteArray(info.size)
-                buf.position(info.offset); buf.limit(info.offset + info.size); buf.get(data)
-                c.releaseOutputBuffer(i, false)
-                onEncodedData?.invoke(data, info)
+                runCatching {
+                    if (info.size <= 0) { c.releaseOutputBuffer(i, false); return }
+                    val buf = c.getOutputBuffer(i) ?: run { c.releaseOutputBuffer(i, false); return }
+                    val data = ByteArray(info.size)
+                    buf.position(info.offset); buf.limit(info.offset + info.size); buf.get(data)
+                    c.releaseOutputBuffer(i, false)
+                    onEncodedData?.invoke(data, info)
+                }
             }
             override fun onInputBufferAvailable(c: MediaCodec, i: Int) {} // Surface mode
             override fun onOutputFormatChanged(c: MediaCodec, f: MediaFormat) {
@@ -519,4 +787,383 @@ class CameraEngine(private val context: Context) {
         encoder = enc
         Log.i(TAG, "Encoder: ${enc.name} ${w}x${h}@${fps}fps ${bitrate/1_000_000}Mbps")
     }
+
+    private fun setupImageReader(chars: CameraCharacteristics, width: Int, height: Int) {
+        val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+        val yuvSizes = map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)
+        
+        val targetRatio = width.toFloat() / height.toFloat()
+        
+        // ML Kit face detection must run on a tiny frame (e.g. 320x180 or 640x360) for performance.
+        // However, it MUST have the same aspect ratio as the encoder output, otherwise the Camera HAL
+        // will crop the FOV differently for the two streams, causing tracker mapping math to break.
+        val matchingAspectSizes = yuvSizes?.filter { 
+            Math.abs(it.width.toFloat() / it.height.toFloat() - targetRatio) < 0.1 
+        }
+        
+        // Pick the absolute smallest matching aspect ratio size (usually 640x360 or 320x180)
+        val yuvSize = matchingAspectSizes?.minByOrNull { it.width * it.height }
+            // If no matching aspect ratio exists (very rare), fallback to the smallest size overall
+            ?: yuvSizes?.minByOrNull { it.width * it.height }
+            // Fallback if yuvSizes is null
+            ?: Size(640, 360)
+            
+        Log.i(TAG, "ImageReader selected tiny resolution: ${yuvSize.width}x${yuvSize.height} for ML Kit (Output is ${width}x${height})")
+        
+        imageReader = android.media.ImageReader.newInstance(
+            yuvSize.width,
+            yuvSize.height,
+            android.graphics.ImageFormat.YUV_420_888,
+            2
+        ).apply {
+            setOnImageAvailableListener({ reader ->
+                val image = runCatching { reader.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
+                if (isFaceTrackingEnabled && isDetectorBusy.compareAndSet(false, true)) {
+                    val rotation = getRotationCompensation()
+                    // Capture width/height inside runCatching — image could be invalid if
+                    // the ImageReader was closed while this callback was queued
+                    val imgW: Int
+                    val imgH: Int
+                    val inputImage: InputImage
+                    try {
+                        imgW = image.width
+                        imgH = image.height
+                        inputImage = InputImage.fromMediaImage(image, rotation)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Image invalid before processing: ${e.message}")
+                        isDetectorBusy.set(false)
+                        runCatching { image.close() }
+                        return@setOnImageAvailableListener
+                    }
+                    getFaceDetector().process(inputImage)
+                        .addOnSuccessListener { faces ->
+                            camHandler?.post {
+                                updateFaceTracking(faces, imgW, imgH, rotation)
+                            }
+                        }
+                        .addOnFailureListener { e ->
+                            Log.e(TAG, "Face detection failed", e)
+                        }
+                        .addOnCompleteListener {
+                            isDetectorBusy.set(false)
+                            runCatching { image.close() }
+                        }
+                } else {
+                    runCatching { image.close() }
+                }
+            }, detectHandler)
+        }
+        Log.i(TAG, "ImageReader configured for Face Tracking: ${yuvSize.width}x${yuvSize.height}")
+    }
+
+    private fun getFaceDetector(): FaceDetector {
+        var detector = faceDetector
+        if (detector == null) {
+            val options = FaceDetectorOptions.Builder()
+                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
+                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
+                .build()
+            detector = FaceDetection.getClient(options)
+            faceDetector = detector
+        }
+        return detector
+    }
+
+    private fun getRotationCompensation(): Int {
+        val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        val display = runCatching {
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
+                val dm = context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+                dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+            } else {
+                @Suppress("DEPRECATION")
+                windowManager.defaultDisplay
+            }
+        }.getOrNull()
+        val rotation = display?.rotation ?: Surface.ROTATION_0
+        val deviceRotationDegrees = when (rotation) {
+            Surface.ROTATION_0 -> 0
+            Surface.ROTATION_90 -> 90
+            Surface.ROTATION_180 -> 180
+            Surface.ROTATION_270 -> 270
+            else -> 0
+        }
+
+        val chars = runCatching { camMgr.getCameraCharacteristics(camDevice?.id ?: "0") }.getOrNull()
+        val facing = chars?.get(CameraCharacteristics.LENS_FACING)
+        val isFrontLens = facing == CameraCharacteristics.LENS_FACING_FRONT
+
+        var rotationCompensation = (sensorOrientation - deviceRotationDegrees + 360) % 360
+
+        if (isFrontLens) {
+            rotationCompensation = (360 - rotationCompensation) % 360
+        }
+        return rotationCompensation
+    }
+
+    private fun updateFaceTracking(faces: List<Face>, imageWidth: Int, imageHeight: Int, rotation: Int) {
+        if (sensorRect == null) return
+        
+        if (faces.isNotEmpty()) {
+            noFaceDetectedFramesCount = 0
+            val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() } ?: return
+            
+            // Calculate logical dimensions based on ML Kit image rotation
+            val logicalWidth = if (rotation == 90 || rotation == 270) imageHeight else imageWidth
+            val logicalHeight = if (rotation == 90 || rotation == 270) imageWidth else imageHeight
+
+            // Extract AR landmarks before 5-frame wait so AR is snappy
+            val lw = logicalWidth.toFloat()
+            val lh = logicalHeight.toFloat()
+            val arData = ArFaceData(
+                bounds = RectF(
+                    face.boundingBox.left / lw, face.boundingBox.top / lh,
+                    face.boundingBox.right / lw, face.boundingBox.bottom / lh
+                ),
+                leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position?.let { PointF(it.x / lw, it.y / lh) },
+                rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position?.let { PointF(it.x / lw, it.y / lh) },
+                noseBase = face.getLandmark(FaceLandmark.NOSE_BASE)?.position?.let { PointF(it.x / lw, it.y / lh) },
+                mouthBottom = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position?.let { PointF(it.x / lw, it.y / lh) },
+                leftCheek = face.getLandmark(FaceLandmark.LEFT_CHEEK)?.position?.let { PointF(it.x / lw, it.y / lh) },
+                rightCheek = face.getLandmark(FaceLandmark.RIGHT_CHEEK)?.position?.let { PointF(it.x / lw, it.y / lh) }
+            )
+            onArFaceDataUpdated?.invoke(arData)
+            glRenderer?.setArFaceData(arData)
+            
+            consecutiveFaceFrames++
+            if (consecutiveFaceFrames < 5) return // wait for 5 consecutive frames to confirm tracking
+
+            if (isFrontCamera) {
+                updateFaceTrackingFront(face, logicalWidth, logicalHeight, rotation)
+            } else {
+                updateFaceTrackingRear(face, logicalWidth, logicalHeight, rotation)
+            }
+        } else {
+            onArFaceDataUpdated?.invoke(null)
+            glRenderer?.setArFaceData(null)
+            
+            // Freeze X/Y at last tracked coordinates — never reset to center
+            targetCenterX = currentCropCenter.x
+            targetCenterY = currentCropCenter.y
+            
+            noFaceDetectedFramesCount++
+            
+            // After ~1.5 seconds (45 frames) of no detection, gently lerp zoom toward 1.0x
+            // so the wider FOV helps the detector re-acquire the face.
+            if (noFaceDetectedFramesCount > 45 && currentCropZoom > 1.05f) {
+                targetZoom = targetZoom + (1.0f - targetZoom) * 0.02f
+            }
+        }
+        Log.i("STICAM_TRACK", "updateFaceTracking: faces=${faces.size} target=($targetCenterX, $targetCenterY) zoom=$targetZoom")
+    }
+
+    private fun updateFaceTrackingRear(face: Face, logicalWidth: Int, logicalHeight: Int, rotation: Int) {
+        val full = sensorRect ?: return
+        val box = face.boundingBox
+
+        val faceCenterX = box.centerX().toFloat()
+        val faceCenterY = box.centerY().toFloat()
+
+        // Normalize to 0.0 .. 1.0
+        val normX = (faceCenterX / logicalWidth).coerceIn(0f, 1f)
+        val normY = (faceCenterY / logicalHeight).coerceIn(0f, 1f)
+
+        // Rotate normalized screen coordinates back to sensor space
+        val nsX: Float
+        val nsY: Float
+        when (rotation) {
+            90 -> {
+                nsX = 1.0f - normY
+                nsY = normX
+            }
+            180 -> {
+                nsX = 1.0f - normX
+                nsY = 1.0f - normY
+            }
+            270 -> {
+                nsX = normY
+                nsY = 1.0f - normX
+            }
+            else -> {
+                nsX = normX
+                nsY = normY
+            }
+        }
+
+        val cropW = full.width() / currentCropZoom
+        val cropH = full.height() / currentCropZoom
+
+        // Sensor coordinates matching our current crop boundaries
+        val currentLeft = currentCropCenter.x - cropW / 2f
+        val currentTop = currentCropCenter.y - cropH / 2f
+
+        targetCenterX = currentLeft + nsX * cropW
+        targetCenterY = currentTop + nsY * cropH
+
+        // Calculate target zoom based on face bounding box height relative to viewport
+        val faceHeightProportion = box.height().toFloat() / logicalHeight
+        val targetProportion = 0.35f
+        val zoomFactor = if (faceHeightProportion > 0.001f) faceHeightProportion / targetProportion else 1f
+        val rawTargetZoom = currentCropZoom * (1f / zoomFactor)
+
+        val halfCropW = cropW / 2f
+        val halfCropH = cropH / 2f
+        targetCenterX = targetCenterX.coerceIn(full.left + halfCropW, full.right - halfCropW)
+        targetCenterY = targetCenterY.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
+
+        val minCenterXDist = Math.max(1f, Math.min(targetCenterX - full.left, full.right - targetCenterX))
+        val minCenterYDist = Math.max(1f, Math.min(targetCenterY - full.top, full.bottom - targetCenterY))
+        val zoomForWidth = full.width().toFloat() / (2f * minCenterXDist)
+        val zoomForHeight = full.height().toFloat() / (2f * minCenterYDist)
+        val boundaryMinZoom = Math.max(zoomForWidth, zoomForHeight)
+
+        targetZoom = Math.max(rawTargetZoom, boundaryMinZoom).coerceIn(1.0f, maxZoom)
+    }
+
+    private fun updateFaceTrackingFront(face: Face, logicalWidth: Int, logicalHeight: Int, rotation: Int) {
+        val full = sensorRect ?: return
+        val box = face.boundingBox
+
+        val faceCenterX = box.centerX().toFloat()
+        val faceCenterY = box.centerY().toFloat()
+
+        // Normalize to 0.0 .. 1.0
+        val normX = (faceCenterX / logicalWidth).coerceIn(0f, 1f)
+        val normY = (faceCenterY / logicalHeight).coerceIn(0f, 1f)
+
+        // Rotate normalized screen coordinates back to sensor space (mirrored horizontally for Front camera)
+        val nsX: Float
+        val nsY: Float
+        when (rotation) {
+            90 -> {
+                nsX = 1.0f - normY
+                nsY = 1.0f - normX
+            }
+            180 -> {
+                nsX = normX
+                nsY = 1.0f - normY
+            }
+            270 -> {
+                nsX = normY
+                nsY = normX
+            }
+            else -> {
+                nsX = 1.0f - normX
+                nsY = normY
+            }
+        }
+
+        val cropW = full.width() / currentCropZoom
+        val cropH = full.height() / currentCropZoom
+
+        // Sensor coordinates matching our current crop boundaries
+        val currentLeft = currentCropCenter.x - cropW / 2f
+        val currentTop = currentCropCenter.y - cropH / 2f
+
+        targetCenterX = currentLeft + nsX * cropW
+        targetCenterY = currentTop + nsY * cropH
+
+        // Calculate target zoom based on face bounding box height relative to viewport
+        val faceHeightProportion = box.height().toFloat() / logicalHeight
+        val targetProportion = 0.35f
+        val zoomFactor = if (faceHeightProportion > 0.001f) faceHeightProportion / targetProportion else 1f
+        val rawTargetZoom = currentCropZoom * (1f / zoomFactor)
+
+        val halfCropW = cropW / 2f
+        val halfCropH = cropH / 2f
+        targetCenterX = targetCenterX.coerceIn(full.left + halfCropW, full.right - halfCropW)
+        targetCenterY = targetCenterY.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
+
+        val minCenterXDist = Math.max(1f, Math.min(targetCenterX - full.left, full.right - targetCenterX))
+        val minCenterYDist = Math.max(1f, Math.min(targetCenterY - full.top, full.bottom - targetCenterY))
+        val zoomForWidth = full.width().toFloat() / (2f * minCenterXDist)
+        val zoomForHeight = full.height().toFloat() / (2f * minCenterYDist)
+        val boundaryMinZoom = Math.max(zoomForWidth, zoomForHeight)
+
+        targetZoom = Math.max(rawTargetZoom, boundaryMinZoom).coerceIn(1.0f, maxZoom)
+    }
+
+    private fun tickFaceTracking() {
+        if (targetZoom.isNaN() || targetZoom.isInfinite() ||
+            targetCenterX.isNaN() || targetCenterX.isInfinite() ||
+            targetCenterY.isNaN() || targetCenterY.isInfinite()) {
+            return
+        }
+
+        Log.d("STICAM_TRACK", "tickFaceTracking: currentCrop=(${currentCropCenter.x}, ${currentCropCenter.y}) zoom=$currentCropZoom target=($targetCenterX, $targetCenterY) zoom=$targetZoom")
+        val full = sensorRect ?: return
+        
+        // --- Smooth Lerp System ---
+        val now = System.nanoTime()
+        lastUpdateTime = now
+        
+        var panFactor = 0.06f
+        var zoomFactor = 0.04f
+
+        if (isInitialEngage) {
+            panFactor = 0.03f
+            zoomFactor = 0.015f
+            if (Math.abs(currentCropZoom - targetZoom) < 0.05f) {
+                isInitialEngage = false
+            }
+        }
+
+        currentCropCenter.x += (targetCenterX - currentCropCenter.x) * panFactor
+        currentCropCenter.y += (targetCenterY - currentCropCenter.y) * panFactor
+        currentCropZoom += (targetZoom - currentCropZoom) * zoomFactor
+
+        currentCropZoom = currentCropZoom.coerceIn(1.0f, maxZoom)
+
+        val cropW = (full.width() / currentCropZoom).toInt().coerceIn(1, full.width())
+        val cropH = (full.height() / currentCropZoom).toInt().coerceIn(1, full.height())
+
+        val imgRatio = captureSize.width.toFloat() / captureSize.height.toFloat()
+        val cropRatio = cropW.toFloat() / cropH.toFloat()
+
+        val visibleW: Float
+        val visibleH: Float
+        if (imgRatio > cropRatio) {
+            visibleW = cropW.toFloat()
+            visibleH = cropW.toFloat() / imgRatio
+        } else {
+            visibleW = cropH.toFloat() * imgRatio
+            visibleH = cropH.toFloat()
+        }
+
+        // Clamp crop center to respect physical sensor bounds and visible area limits
+        val cx = currentCropCenter.x.coerceIn(full.left + visibleW / 2f, full.right - visibleW / 2f)
+        val cy = currentCropCenter.y.coerceIn(full.top + visibleH / 2f, full.bottom - visibleH / 2f)
+
+        if (cx != currentCropCenter.x) {
+            currentCropCenter.x = cx
+        }
+        if (cy != currentCropCenter.y) {
+            currentCropCenter.y = cy
+        }
+
+        val left = (cx - cropW / 2f).toInt().coerceIn(full.left, full.right - cropW)
+        val top = (cy - cropH / 2f).toInt().coerceIn(full.top, full.bottom - cropH)
+        val right = left + cropW
+        val bottom = top + cropH
+
+        val newRect = Rect(left, top, right, bottom)
+        if (lastAppliedCropRect == null || lastAppliedCropRect != newRect) {
+            Log.d("STICAM_TRACK", "CROP_UPDATE: Res=${captureSize.width}x${captureSize.height}, Sensor=${full.width()}x${full.height()}, Crop=[$left, $top, $right, $bottom] (${cropW}x${cropH}), zoom=$currentCropZoom, maxZ=$maxZoom")
+            activeFaceCropRect = newRect
+            lastAppliedCropRect = newRect
+            
+            onFaceZoomChanged?.let { callback ->
+                val zoomVal = currentCropZoom
+                callback.invoke(zoomVal)
+            }
+
+            val s = session ?: return
+            val b = reqBuilder ?: return
+            applyZoomRect(b)
+            runCatching { s.setRepeatingRequest(b.build(), captureCallback, camHandler) }
+        }
+    }
+
 }

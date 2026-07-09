@@ -15,6 +15,7 @@
     <Company>idham.dev</Company>
     <Product>STICam</Product>
     <Description>STICam Host Application for Windows</Description>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
@@ -34,6 +35,7 @@
     <EmbeddedResource Include="tools\adb.exe"         Condition="Exists('tools\adb.exe')" />
     <EmbeddedResource Include="tools\AdbWinApi.dll"   Condition="Exists('tools\AdbWinApi.dll')" />
     <EmbeddedResource Include="tools\AdbWinUsbApi.dll" Condition="Exists('tools\AdbWinUsbApi.dll')" />
+    <EmbeddedResource Include="tools\ffmpeg.exe"      Condition="Exists('tools\ffmpeg.exe')" />
     <EmbeddedResource Include="tools\obs-virtualcam-module64.dll" Condition="Exists('tools\obs-virtualcam-module64.dll')" />
     <EmbeddedResource Include="fonts\Lalezar-Regular.ttf" Condition="Exists('fonts\Lalezar-Regular.ttf')" />
   </ItemGroup>
