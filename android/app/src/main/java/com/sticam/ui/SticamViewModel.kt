@@ -577,21 +577,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
 
 
 
-    // ─────────────────────────────────────────────────────────────────────────
-    //  Orientation
-    // ─────────────────────────────────────────────────────────────────────────
 
-    fun cycleOrientation() {
-        val next = (engine.outputRotation + 90) % 360
-        engine.setManualRotation(next)
-        _ui.update { s -> 
-            val isFront = engine.isFrontCamera
-            val faceStr = if (isFront) "FRONT" else "BACK"
-            val debugText = "Face: $faceStr | Mirror: ${s.isMirrored} | OutRot: ${engine.outputRotation} | DevOri: ${engine.gravityRotation} | SenOri: ${engine.sensorOrientation} | Res: ${engine.outW}x${engine.outH}"
-            s.copy(debugInfo = debugText, outputRotation = next) 
-        }
-        sendSyncParamsToClient()
-    }
 
     // ─────────────────────────────────────────────────────────────────────────
     //  Mirror
