@@ -67,8 +67,6 @@ namespace SticamHost
         private readonly ComboBox     _cbCamera;
         private readonly Label        _lblResolutionTitle;
         private readonly ComboBox     _cbResolution;
-        private readonly Label        _lblArTitle;
-        private readonly ComboBox     _cbArFilter;
 
         // hidden idle controls kept for logic compatibility
         private readonly CheckBox     _chkVirtualCam;
@@ -613,40 +611,7 @@ namespace SticamHost
             };
             _panelControls.Controls.Add(_cbResolution);
             
-            yOffset += 38;
-            _lblArTitle = new Label
-            {
-                Text = "AR FILTER",
-                Font = MakeFont(10f),
-                ForeColor = TextDim,
-                Location = new Point(12, yOffset),
-                AutoSize = true,
-                BackColor = Color.Transparent
-            };
-            _panelControls.Controls.Add(_lblArTitle);
-            
-            yOffset += 18;
-            _cbArFilter = new ComboBox
-            {
-                Location = new Point(12, yOffset),
-                Width = 196, // Full width again since LUT is removed
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                BackColor = NavyMid,
-                ForeColor = TextWhite,
-                FlatStyle = FlatStyle.Flat,
-                Font = MakeFont(9.5f)
-            };
-            _cbArFilter.Items.AddRange(new object[] { "None", "Crown" });
-            _cbArFilter.SelectedIndexChanged += (s, e) =>
-            {
-                if (_isSyncing) return;
-                string selected = _cbArFilter.SelectedItem?.ToString();
-                if (selected != null)
-                {
-                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: null, zoom: null, flash: null, cameraId: null, resolution: null, arFilter: selected);
-                }
-            };
-            _panelControls.Controls.Add(_cbArFilter);
+
 
             _liveContainer.Controls.Add(_panelControls);
             _liveContainer.Controls.Add(_videoPb);
@@ -1056,19 +1021,7 @@ namespace SticamHost
                                     _cbResolution.SelectedIndex = selectedIndex;
                                 }
                             }
-                            // AR and LUT Filter sync
-                            if (root.TryGetProperty("ar_filter", out var arProp))
-                            {
-                                string arStr = arProp.GetString() ?? "None";
-                                for (int i = 0; i < _cbArFilter.Items.Count; i++)
-                                {
-                                    if (_cbArFilter.Items[i].ToString() == arStr)
-                                    {
-                                        _cbArFilter.SelectedIndex = i;
-                                        break;
-                                    }
-                                }
-                            }
+
                             if (root.TryGetProperty("orientation", out var oriProp))
                             {
                                 int rotation = oriProp.GetInt32();
