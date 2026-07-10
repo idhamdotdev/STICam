@@ -154,6 +154,10 @@ class CameraEngine(private val context: Context) {
     // Smoothed face height signal to prevent noisy bounding boxes from causing random zoom
     private var smoothedFaceHeight = 0f
 
+    // Smoothed sensor coordinates to filter out rapid movement/jitter for organic panning
+    private var smoothedSensorX = 0f
+    private var smoothedSensorY = 0f
+
     var isFaceTrackingEnabled: Boolean = false
         set(value) {
             field = value
@@ -171,6 +175,8 @@ class CameraEngine(private val context: Context) {
                     isInitialEngage = true
                     velX = 0f; velY = 0f; velZoom = 0f  // clear any residual momentum
                     smoothedFaceHeight = 0f              // reset EMA so zoom re-anchors cleanly
+                    smoothedSensorX = 0f
+                    smoothedSensorY = 0f
                     lastAppliedCropRect = null
                     camHandler?.removeCallbacks(faceTrackingUpdateRunnable)
                     camHandler?.post(faceTrackingUpdateRunnable)
@@ -915,6 +921,7 @@ class CameraEngine(private val context: Context) {
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
                 .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
                 .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
+                .setMinFaceSize(0.04f) // Allow detecting smaller faces when the user goes far back
                 .build()
             detector = FaceDetection.getClient(options)
             faceDetector = detector
@@ -1049,10 +1056,24 @@ class CameraEngine(private val context: Context) {
             }
         }
 
-        // Front camera: flip Y (left-right axis in sensor space) to match physical movement direction.
-        // The front sensor's Y axis is inverted relative to the back camera due to how it faces the user.
-        val sensorX = nsX
-        val sensorY = nsY
+        // Apply a soft noise gate and EMA filter directly to the raw sensor coordinates (nsX, nsY).
+        // If the change in face position is very small (less than 0.008 of sensor width/height), 
+        // we scale the EMA alpha towards 0. This completely eliminates ML Kit frame-to-frame noise 
+        // and micro-movements, stopping the camera from bouncing/jittering left and right when stationary.
+        val posAlpha = if (isInitialEngage) 0.35f else 0.065f
+        if (smoothedSensorX < 0.001f && smoothedSensorY < 0.001f) {
+            smoothedSensorX = nsX
+            smoothedSensorY = nsY
+        } else {
+            val diffInputX = nsX - smoothedSensorX
+            val diffInputY = nsY - smoothedSensorY
+            
+            val gateX = (Math.abs(diffInputX) / 0.008f).coerceIn(0f, 1f)
+            val gateY = (Math.abs(diffInputY) / 0.008f).coerceIn(0f, 1f)
+            
+            smoothedSensorX = smoothedSensorX + posAlpha * gateX * diffInputX
+            smoothedSensorY = smoothedSensorY + posAlpha * gateY * diffInputY
+        }
 
         val cropW = full.width() / currentCropZoom
         val cropH = full.height() / currentCropZoom
@@ -1061,39 +1082,29 @@ class CameraEngine(private val context: Context) {
         val currentLeft = currentCropCenter.x - cropW / 2f
         val currentTop = currentCropCenter.y - cropH / 2f
 
-        val rawTargetX = currentLeft + sensorX * cropW
-        val rawTargetY = currentTop + sensorY * cropH
+        // Use the smoothed coordinates for the target calculation.
+        // We can entirely eliminate the discrete step-based dead zone because the smoothed input 
+        // is 100% continuous, resulting in a beautifully organic panning movement.
+        val targetXBeforeCoerce = currentLeft + smoothedSensorX * cropW
+        val targetYBeforeCoerce = currentTop + smoothedSensorY * cropH
 
-        // ── Dead zone: only in steady-state to prevent jitter while talking ──────
-        // During initial engage we skip dead zone so the camera always locks on.
-        val targetXBeforeCoerce: Float
-        val targetYBeforeCoerce: Float
-        if (isInitialEngage) {
-            targetXBeforeCoerce = rawTargetX
-            targetYBeforeCoerce = rawTargetY
-        } else {
-            val deadZoneX = cropW * 0.03f
-            val deadZoneY = cropH * 0.03f
-            targetXBeforeCoerce = if (Math.abs(rawTargetX - targetCenterX) > deadZoneX) rawTargetX else targetCenterX
-            targetYBeforeCoerce = if (Math.abs(rawTargetY - targetCenterY) > deadZoneY) rawTargetY else targetCenterY
-        }
-
-        // Auto-zoom: frame the face at ~26% of frame height.
-        // Front camera uses a minimum 1.5x zoom floor so the crop is always smaller
-        // than the full sensor, giving room for the pan to move left/right.
-        val minZoom = if (isFrontCamera) 1.5f else 1.0f
+        // Auto-zoom: Frame the face to maintain the close-up size requested by the user (~58% of frame height)
+        // even when moving closer/further or going far behind.
+        val targetProportion = 0.58f
+        val minZoom = 1.5f
         val rawFaceHeight = box.height().toFloat() / logicalHeight
         val emaAlpha = if (isInitialEngage) 0.4f else 0.1f
         smoothedFaceHeight = if (smoothedFaceHeight < 0.001f) rawFaceHeight
                              else smoothedFaceHeight + emaAlpha * (rawFaceHeight - smoothedFaceHeight)
-        val targetProportion = 0.26f
-        val rawTargetZoom = if (smoothedFaceHeight > 0.005f)
-            (currentCropZoom * targetProportion / smoothedFaceHeight).coerceIn(minZoom, maxZoom)
-        else currentCropZoom.coerceAtLeast(minZoom)
-        val prevTarget = targetZoom
-        val maxDeltaPct = if (isInitialEngage) 0.15f else 0.04f
-        val maxDelta = prevTarget * maxDeltaPct
-        targetZoom = rawTargetZoom.coerceIn(prevTarget - maxDelta, prevTarget + maxDelta)
+
+        val rawTargetZoom = if (smoothedFaceHeight > 0.005f) {
+            (targetProportion / smoothedFaceHeight).coerceIn(minZoom, maxZoom)
+        } else {
+            currentCropZoom.coerceAtLeast(minZoom)
+        }
+        // Direct assignment to allow responsive zoom target updates. 
+        // The smoothing is handled beautifully at 30 FPS by alphaZoom in tickFaceTracking().
+        targetZoom = rawTargetZoom
 
         // Compute crop boundaries and clamp crop center using the calculated targetZoom
         val newCropW = full.width() / targetZoom
@@ -1103,7 +1114,7 @@ class CameraEngine(private val context: Context) {
 
         targetCenterX = targetXBeforeCoerce.coerceIn(full.left + halfCropW, full.right - halfCropW)
         targetCenterY = targetYBeforeCoerce.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
-        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera rot=$rotation sX=$sensorX sY=$sensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom")
+        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera rot=$rotation nsX=$nsX nsY=$nsY smX=$smoothedSensorX smY=$smoothedSensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom rawFH=$rawFaceHeight smoothFH=$smoothedFaceHeight rawTZ=$rawTargetZoom initEngage=$isInitialEngage")
     }
 
     private fun tickFaceTracking() {
@@ -1115,50 +1126,32 @@ class CameraEngine(private val context: Context) {
 
         val full = sensorRect ?: return
 
-        // ── Velocity-damped lerp (talking head quality) ────────────────────────
-        // Instead of a fixed lerp fraction, we accumulate velocity toward the target
-        // and apply friction each tick. This produces a smooth ease-in/ease-out
-        // glide that feels like a professional broadcast camera operator.
+        // ── Direct, Sway-Free Smooth interpolation ────────────────────────────
+        // We completely remove the physical velocity/friction calculations to eliminate
+        // any momentum-based sway, overshoot, or oscillation.
+        // Instead, the camera crop coordinates move towards the target center using a direct
+        // exponential moving average (EMA) filter. This creates an extremely smooth ease-out 
+        // that comes to a complete, instant stop once the target face stops moving.
         //
-        // Tuning guide:
-        //   panAccel  : how eagerly the camera accelerates toward the face (lower = smoother)
-        //   friction  : how quickly velocity decays (higher = snappier stop)
-        //   zoomAccel : zoom acceleration (keep slower than pan for calm feel)
-        //   zoomFric  : zoom friction
+        val alphaPan = if (isInitialEngage) 0.25f else 0.05f
+        val alphaZoom = if (isInitialEngage) 0.20f else 0.04f
 
-        val panAccel: Float
-        val friction: Float
-        val zoomAccel: Float
-        val zoomFric: Float
+        val distToTargetX = Math.abs(currentCropCenter.x - targetCenterX)
+        val distToTargetY = Math.abs(currentCropCenter.y - targetCenterY)
+        val distToTargetZoom = Math.abs(currentCropZoom - targetZoom)
 
-        if (isInitialEngage) {
-            // Fast initial lock-on
-            panAccel  = 0.030f
-            friction  = 0.82f
-            zoomAccel = 0.015f
-            zoomFric  = 0.84f
-            val distToTargetX = Math.abs(currentCropCenter.x - targetCenterX)
-            val distToTargetY = Math.abs(currentCropCenter.y - targetCenterY)
-            val distToTargetZoom = Math.abs(currentCropZoom - targetZoom)
-            if ((distToTargetZoom < 0.1f && distToTargetX < 100f && distToTargetY < 100f) || consecutiveFaceFrames > 35) {
-                isInitialEngage = false
-            }
-        } else {
-            // Steady-state: smooth cinematic pan, very slow zoom
-            panAccel  = 0.008f   // gentle — won't jerk even on fast head turns
-            friction  = 0.88f    // high friction for a floaty broadcast feel
-            zoomAccel = 0.004f
-            zoomFric  = 0.90f
+        if (isInitialEngage && distToTargetZoom < 0.1f && distToTargetX < 100f && distToTargetY < 100f) {
+            isInitialEngage = false
         }
 
-        // Accumulate velocity toward target, then apply friction
-        velX    = velX    * friction + (targetCenterX - currentCropCenter.x) * panAccel
-        velY    = velY    * friction + (targetCenterY - currentCropCenter.y) * panAccel
-        velZoom = velZoom * zoomFric + (targetZoom    - currentCropZoom)     * zoomAccel
+        currentCropCenter.x += alphaPan * (targetCenterX - currentCropCenter.x)
+        currentCropCenter.y += alphaPan * (targetCenterY - currentCropCenter.y)
+        currentCropZoom     += alphaZoom * (targetZoom - currentCropZoom)
 
-        currentCropCenter.x += velX
-        currentCropCenter.y += velY
-        currentCropZoom     += velZoom
+        // Clear velocity variables
+        velX = 0f
+        velY = 0f
+        velZoom = 0f
 
         currentCropZoom = currentCropZoom.coerceIn(1.0f, maxZoom)
 

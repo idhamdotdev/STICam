@@ -457,7 +457,6 @@ private fun CameraPreviewLayer(
     state: SticamUiState,
     modifier: Modifier = Modifier
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
     var readySurface by remember { mutableStateOf<android.view.Surface?>(null) }
 
     /**
@@ -944,12 +943,7 @@ fun BottomControlBar(
                 RotateIcon(color = Color.White)
             }
 
-            ControlButton(
-                active = false,
-                onClick = { vm.cycleOrientation() }
-            ) {
-                OrientationIcon(color = Color.White)
-            }
+
 
             ControlButton(
                 active = state.isFaceTrackingEnabled,
@@ -1105,42 +1099,7 @@ fun GearIcon(color: Color) {
     }
 }
 
-@Composable
-fun OrientationIcon(color: Color) {
-    Canvas(modifier = Modifier.size(24.dp)) {
-        val w = size.width
-        val h = size.height
-        val cx = w / 2f
-        val cy = h / 2f
-        
-        // Curved arrow to represent screen rotation
-        drawArc(
-            color = color,
-            startAngle = 45f,
-            sweepAngle = 270f,
-            useCenter = false,
-            style = DrawStroke(width = 2.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
-        )
-        
-        // Arrow head
-        val arrowPath = Path().apply {
-            moveTo(cx + 8.dp.toPx(), cy + 8.dp.toPx())
-            lineTo(cx + 14.dp.toPx(), cy + 8.dp.toPx())
-            lineTo(cx + 14.dp.toPx(), cy + 2.dp.toPx())
-        }
-        drawPath(arrowPath, color = color)
-        
-        // Phone outline in the center
-        val pw = 8.dp.toPx()
-        val ph = 12.dp.toPx()
-        drawRect(
-            color = color.copy(alpha = 0.8f),
-            topLeft = Offset(cx - pw/2f, cy - ph/2f),
-            size = androidx.compose.ui.geometry.Size(pw, ph),
-            style = DrawStroke(width = 1.5.dp.toPx())
-        )
-    }
-}
+
 
 @Composable
 fun RotateIcon(color: Color) {
@@ -1400,12 +1359,7 @@ fun SideControlBar(
                     Box(Modifier.portraitRotate()) { RotateIcon(color = iconColor) }
                 }
 
-                ControlButton(
-                    active = false,
-                    onClick = { vm.cycleOrientation() }
-                ) {
-                    Box(Modifier.portraitRotate()) { OrientationIcon(color = iconColor) }
-                }
+
 
                 ControlButton(
                     active = state.isFlashOn,
