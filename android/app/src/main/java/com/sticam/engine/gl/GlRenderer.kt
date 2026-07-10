@@ -18,6 +18,7 @@ class GlRenderer(
     private val outW: Int,
     private val outH: Int,
     initialRotationDegrees: Int = 0,
+    private val isFrontCamera: Boolean = false,
     private val onInputSurfaceReady: (Surface) -> Unit
 ) {
     @Volatile var rotationDegrees = initialRotationDegrees
@@ -254,7 +255,11 @@ class GlRenderer(
     }
     
     private fun drawTexture(rotation: Int) {
-        if (rotation == 90 || rotation == 270) {
+        // For front camera the rotation corrects the sensor orientation — the output
+        // is still landscape, so always use the full viewport (no pillarboxing).
+        // For back camera a 90/270 rotation means the user chose a portrait stream,
+        // so pillarbox it inside the landscape encoder buffer.
+        if (!isFrontCamera && (rotation == 90 || rotation == 270)) {
             val w = (outH * outH) / outW
             val x = (outW - w) / 2
             GLES30.glViewport(x, 0, w, outH)

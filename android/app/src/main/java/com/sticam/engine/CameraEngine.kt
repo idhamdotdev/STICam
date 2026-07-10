@@ -68,11 +68,15 @@ class CameraEngine(private val context: Context) {
     // OpenGL LUT Pipeline
     private var glRenderer: GlRenderer? = null
     private var currentPreviewSurface: Surface? = null
+    private fun isZeroCopyPath(lut: String = activeLutFilter, ar: String = activeArFilter): Boolean {
+        return !isFrontCamera && lut == "None" && ar == "None"
+    }
+
     var activeLutFilter: String = "None"
         set(value) {
-            val wasZeroCopy = (field == "None" && activeArFilter == "None")
+            val wasZeroCopy = isZeroCopyPath(field, activeArFilter)
             field = value
-            val isZeroCopy = (field == "None" && activeArFilter == "None")
+            val isZeroCopy = isZeroCopyPath(field, activeArFilter)
             if (wasZeroCopy != isZeroCopy) {
                 // We need to re-create the session!
                 camHandler?.post {
@@ -88,9 +92,9 @@ class CameraEngine(private val context: Context) {
 
     var activeArFilter: String = "None"
         set(value) {
-            val wasZeroCopy = (activeLutFilter == "None" && field == "None")
+            val wasZeroCopy = isZeroCopyPath(activeLutFilter, field)
             field = value
-            val isZeroCopy = (activeLutFilter == "None" && field == "None")
+            val isZeroCopy = isZeroCopyPath(activeLutFilter, field)
             if (wasZeroCopy != isZeroCopy) {
                 camHandler?.post {
                     session?.close()
@@ -111,6 +115,18 @@ class CameraEngine(private val context: Context) {
     var onOrientationChanged: (() -> Unit)? = null
     private var orientationListener: android.view.OrientationEventListener? = null
 
+    /**
+     * Total rotation the GL encoder must apply to produce an upright stream on the PC.
+     * Front camera: sensor physically mounted rotated → combine sensor + user manual offset.
+     * Back camera:  zero-copy path handles rotation via metadata; GL path only needs user offset.
+     */
+    private val encoderRotation: Int
+        get() = if (isFrontCamera) {
+            (sensorOrientation + outputRotation) % 360
+        } else {
+            outputRotation
+        }
+
     // AI Face Tracking
     private var imageReader: ImageReader? = null
     private var faceDetector: FaceDetector? = null
@@ -130,6 +146,14 @@ class CameraEngine(private val context: Context) {
     private var consecutiveFaceFrames = 0
     private var isInitialEngage = false
 
+    // Velocity accumulators for momentum-based smoothing (talking head dampening)
+    private var velX = 0f
+    private var velY = 0f
+    private var velZoom = 0f
+
+    // Smoothed face height signal to prevent noisy bounding boxes from causing random zoom
+    private var smoothedFaceHeight = 0f
+
     var isFaceTrackingEnabled: Boolean = false
         set(value) {
             field = value
@@ -145,6 +169,8 @@ class CameraEngine(private val context: Context) {
                     noFaceDetectedFramesCount = 0
                     consecutiveFaceFrames = 0
                     isInitialEngage = true
+                    velX = 0f; velY = 0f; velZoom = 0f  // clear any residual momentum
+                    smoothedFaceHeight = 0f              // reset EMA so zoom re-anchors cleanly
                     lastAppliedCropRect = null
                     camHandler?.removeCallbacks(faceTrackingUpdateRunnable)
                     camHandler?.post(faceTrackingUpdateRunnable)
@@ -152,6 +178,7 @@ class CameraEngine(private val context: Context) {
                     targetCenterX = full.centerX().toFloat()
                     targetCenterY = full.centerY().toFloat()
                     targetZoom = 1.0f
+                    velX = 0f; velY = 0f; velZoom = 0f  // clear momentum on disable
                     // Do not remove callbacks — let tickFaceTracking lerp us back smoothly.
                 }
             }
@@ -173,6 +200,8 @@ class CameraEngine(private val context: Context) {
                         return
                     }
                 }
+            } else if (isFaceTrackingEnabled) {
+                camHandler?.postDelayed(this, 100)
             }
         }
     }
@@ -342,7 +371,8 @@ class CameraEngine(private val context: Context) {
     fun setManualRotation(rotationDegrees: Int) {
         outputRotation = rotationDegrees
         gravityRotation = rotationDegrees
-        glRenderer?.rotationDegrees = rotationDegrees
+        // Push the corrected total rotation (sensor + manual) to the live GL renderer
+        glRenderer?.rotationDegrees = encoderRotation
         onOrientationChanged?.invoke()
     }
 
@@ -432,7 +462,7 @@ class CameraEngine(private val context: Context) {
         val enc = encSurface ?: return
         imageReader?.surface?.let { outputs.add(it) }
 
-        if (activeLutFilter == "None" && activeArFilter == "None") {
+        if (isZeroCopyPath()) {
             // ZERO-COPY PATH
             preview?.let { outputs.add(it) }
             outputs.add(enc)
@@ -455,7 +485,9 @@ class CameraEngine(private val context: Context) {
             if (preview != null) {
                 val cw = captureSize.width
                 val ch = captureSize.height
-                glRenderer = GlRenderer(preview, enc, cw, ch, outW, outH, outputRotation) { glInputSurface ->
+                // encoderRotation = sensor orientation + user manual offset (for front camera)
+                // so the PC always receives an upright stream regardless of camera facing.
+                glRenderer = GlRenderer(preview, enc, cw, ch, outW, outH, encoderRotation, isFrontCamera) { glInputSurface ->
                     glRenderer?.setFilter(activeLutFilter)
                     glRenderer?.setArFilter(activeArFilter)
                     outputs.add(glInputSurface)
@@ -538,6 +570,25 @@ class CameraEngine(private val context: Context) {
         reqBuilder = b
         s.setRepeatingRequest(b.build(), captureCallback, camHandler)
         Log.i(TAG, "Repeating request started (lock state: $isFocusLocked, flash: ${this@CameraEngine.isFlashActive})")
+        if (isFaceTrackingEnabled) {
+            camHandler?.post {
+                val full = sensorRect ?: return@post
+                if (currentCropCenter.x == 0f && currentCropCenter.y == 0f) {
+                    currentCropCenter.set(full.centerX().toFloat(), full.centerY().toFloat())
+                }
+                targetCenterX = currentCropCenter.x
+                targetCenterY = currentCropCenter.y
+                targetZoom = currentCropZoom
+                noFaceDetectedFramesCount = 0
+                consecutiveFaceFrames = 0
+                isInitialEngage = true
+                velX = 0f; velY = 0f; velZoom = 0f
+                smoothedFaceHeight = 0f
+                lastAppliedCropRect = null
+                camHandler?.removeCallbacks(faceTrackingUpdateRunnable)
+                camHandler?.post(faceTrackingUpdateRunnable)
+            }
+        }
     }
 
     fun setFocusLock(locked: Boolean) {
@@ -895,11 +946,16 @@ class CameraEngine(private val context: Context) {
         val facing = chars?.get(CameraCharacteristics.LENS_FACING)
         val isFrontLens = facing == CameraCharacteristics.LENS_FACING_FRONT
 
-        var rotationCompensation = (sensorOrientation - deviceRotationDegrees + 360) % 360
-
-        if (isFrontLens) {
-            rotationCompensation = (360 - rotationCompensation) % 360
+        // ML Kit requires the rotation compensation that maps the image to upright.
+        // For back camera:  (sensorOrientation - deviceRotation + 360) % 360
+        // For front camera: (sensorOrientation + deviceRotation) % 360
+        // Both formulas are the standard ML Kit recommendation.
+        val rotationCompensation = if (isFrontLens) {
+            (sensorOrientation + deviceRotationDegrees) % 360
+        } else {
+            (sensorOrientation - deviceRotationDegrees + 360) % 360
         }
+        Log.d(TAG, "getRotationCompensation: isFront=$isFrontLens sensorOri=$sensorOrientation deviceRot=$deviceRotationDegrees compensation=$rotationCompensation")
         return rotationCompensation
     }
 
@@ -933,13 +989,9 @@ class CameraEngine(private val context: Context) {
             glRenderer?.setArFaceData(arData)
             
             consecutiveFaceFrames++
-            if (consecutiveFaceFrames < 5) return // wait for 5 consecutive frames to confirm tracking
+            if (consecutiveFaceFrames < 2) return // wait 2 consecutive frames to filter noise
 
-            if (isFrontCamera) {
-                updateFaceTrackingFront(face, logicalWidth, logicalHeight, rotation)
-            } else {
-                updateFaceTrackingRear(face, logicalWidth, logicalHeight, rotation)
-            }
+            updateFaceTracking(face, logicalWidth, logicalHeight, rotation)
         } else {
             onArFaceDataUpdated?.invoke(null)
             glRenderer?.setArFaceData(null)
@@ -959,32 +1011,37 @@ class CameraEngine(private val context: Context) {
         Log.i("STICAM_TRACK", "updateFaceTracking: faces=${faces.size} target=($targetCenterX, $targetCenterY) zoom=$targetZoom")
     }
 
-    private fun updateFaceTrackingRear(face: Face, logicalWidth: Int, logicalHeight: Int, rotation: Int) {
+    private fun updateFaceTracking(face: Face, logicalWidth: Int, logicalHeight: Int, rotation: Int) {
         val full = sensorRect ?: return
         val box = face.boundingBox
 
         val faceCenterX = box.centerX().toFloat()
         val faceCenterY = box.centerY().toFloat()
 
-        // Normalize to 0.0 .. 1.0
+        // Normalize face center to 0.0..1.0 in the rotated (upright) image space.
+        // Do NOT apply any mirror flip here — the rotation transform below maps
+        // correctly to sensor space regardless of camera facing direction.
         val normX = (faceCenterX / logicalWidth).coerceIn(0f, 1f)
         val normY = (faceCenterY / logicalHeight).coerceIn(0f, 1f)
 
-        // Rotate normalized screen coordinates back to sensor space
+        // Rotate normalized image-space coordinates back to raw sensor space.
+        // These rotation cases undo what ML Kit's rotation compensation did to the image.
         val nsX: Float
         val nsY: Float
         when (rotation) {
             90 -> {
-                nsX = 1.0f - normY
-                nsY = normX
+                // Image was rotated 90° CW relative to sensor → undo it
+                nsX = normY
+                nsY = 1.0f - normX
             }
             180 -> {
                 nsX = 1.0f - normX
                 nsY = 1.0f - normY
             }
             270 -> {
-                nsX = normY
-                nsY = 1.0f - normX
+                // Image was rotated 270° CW (90° CCW) relative to sensor → undo it
+                nsX = 1.0f - normY
+                nsY = normX
             }
             else -> {
                 nsX = normX
@@ -992,97 +1049,61 @@ class CameraEngine(private val context: Context) {
             }
         }
 
+        // Front camera: flip Y (left-right axis in sensor space) to match physical movement direction.
+        // The front sensor's Y axis is inverted relative to the back camera due to how it faces the user.
+        val sensorX = nsX
+        val sensorY = nsY
+
         val cropW = full.width() / currentCropZoom
         val cropH = full.height() / currentCropZoom
-
+        
         // Sensor coordinates matching our current crop boundaries
         val currentLeft = currentCropCenter.x - cropW / 2f
         val currentTop = currentCropCenter.y - cropH / 2f
 
-        targetCenterX = currentLeft + nsX * cropW
-        targetCenterY = currentTop + nsY * cropH
+        val rawTargetX = currentLeft + sensorX * cropW
+        val rawTargetY = currentTop + sensorY * cropH
 
-        // Calculate target zoom based on face bounding box height relative to viewport
-        val faceHeightProportion = box.height().toFloat() / logicalHeight
-        val targetProportion = 0.35f
-        val zoomFactor = if (faceHeightProportion > 0.001f) faceHeightProportion / targetProportion else 1f
-        val rawTargetZoom = currentCropZoom * (1f / zoomFactor)
-
-        val halfCropW = cropW / 2f
-        val halfCropH = cropH / 2f
-        targetCenterX = targetCenterX.coerceIn(full.left + halfCropW, full.right - halfCropW)
-        targetCenterY = targetCenterY.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
-
-        val minCenterXDist = Math.max(1f, Math.min(targetCenterX - full.left, full.right - targetCenterX))
-        val minCenterYDist = Math.max(1f, Math.min(targetCenterY - full.top, full.bottom - targetCenterY))
-        val zoomForWidth = full.width().toFloat() / (2f * minCenterXDist)
-        val zoomForHeight = full.height().toFloat() / (2f * minCenterYDist)
-        val boundaryMinZoom = Math.max(zoomForWidth, zoomForHeight)
-
-        targetZoom = Math.max(rawTargetZoom, boundaryMinZoom).coerceIn(1.0f, maxZoom)
-    }
-
-    private fun updateFaceTrackingFront(face: Face, logicalWidth: Int, logicalHeight: Int, rotation: Int) {
-        val full = sensorRect ?: return
-        val box = face.boundingBox
-
-        val faceCenterX = box.centerX().toFloat()
-        val faceCenterY = box.centerY().toFloat()
-
-        // Normalize to 0.0 .. 1.0
-        val normX = (faceCenterX / logicalWidth).coerceIn(0f, 1f)
-        val normY = (faceCenterY / logicalHeight).coerceIn(0f, 1f)
-
-        // Rotate normalized screen coordinates back to sensor space (mirrored horizontally for Front camera)
-        val nsX: Float
-        val nsY: Float
-        when (rotation) {
-            90 -> {
-                nsX = 1.0f - normY
-                nsY = 1.0f - normX
-            }
-            180 -> {
-                nsX = normX
-                nsY = 1.0f - normY
-            }
-            270 -> {
-                nsX = normY
-                nsY = normX
-            }
-            else -> {
-                nsX = 1.0f - normX
-                nsY = normY
-            }
+        // ── Dead zone: only in steady-state to prevent jitter while talking ──────
+        // During initial engage we skip dead zone so the camera always locks on.
+        val targetXBeforeCoerce: Float
+        val targetYBeforeCoerce: Float
+        if (isInitialEngage) {
+            targetXBeforeCoerce = rawTargetX
+            targetYBeforeCoerce = rawTargetY
+        } else {
+            val deadZoneX = cropW * 0.03f
+            val deadZoneY = cropH * 0.03f
+            targetXBeforeCoerce = if (Math.abs(rawTargetX - targetCenterX) > deadZoneX) rawTargetX else targetCenterX
+            targetYBeforeCoerce = if (Math.abs(rawTargetY - targetCenterY) > deadZoneY) rawTargetY else targetCenterY
         }
 
-        val cropW = full.width() / currentCropZoom
-        val cropH = full.height() / currentCropZoom
+        // Auto-zoom: frame the face at ~26% of frame height.
+        // Front camera uses a minimum 1.5x zoom floor so the crop is always smaller
+        // than the full sensor, giving room for the pan to move left/right.
+        val minZoom = if (isFrontCamera) 1.5f else 1.0f
+        val rawFaceHeight = box.height().toFloat() / logicalHeight
+        val emaAlpha = if (isInitialEngage) 0.4f else 0.1f
+        smoothedFaceHeight = if (smoothedFaceHeight < 0.001f) rawFaceHeight
+                             else smoothedFaceHeight + emaAlpha * (rawFaceHeight - smoothedFaceHeight)
+        val targetProportion = 0.26f
+        val rawTargetZoom = if (smoothedFaceHeight > 0.005f)
+            (currentCropZoom * targetProportion / smoothedFaceHeight).coerceIn(minZoom, maxZoom)
+        else currentCropZoom.coerceAtLeast(minZoom)
+        val prevTarget = targetZoom
+        val maxDeltaPct = if (isInitialEngage) 0.15f else 0.04f
+        val maxDelta = prevTarget * maxDeltaPct
+        targetZoom = rawTargetZoom.coerceIn(prevTarget - maxDelta, prevTarget + maxDelta)
 
-        // Sensor coordinates matching our current crop boundaries
-        val currentLeft = currentCropCenter.x - cropW / 2f
-        val currentTop = currentCropCenter.y - cropH / 2f
+        // Compute crop boundaries and clamp crop center using the calculated targetZoom
+        val newCropW = full.width() / targetZoom
+        val newCropH = full.height() / targetZoom
+        val halfCropW = newCropW / 2f
+        val halfCropH = newCropH / 2f
 
-        targetCenterX = currentLeft + nsX * cropW
-        targetCenterY = currentTop + nsY * cropH
-
-        // Calculate target zoom based on face bounding box height relative to viewport
-        val faceHeightProportion = box.height().toFloat() / logicalHeight
-        val targetProportion = 0.35f
-        val zoomFactor = if (faceHeightProportion > 0.001f) faceHeightProportion / targetProportion else 1f
-        val rawTargetZoom = currentCropZoom * (1f / zoomFactor)
-
-        val halfCropW = cropW / 2f
-        val halfCropH = cropH / 2f
-        targetCenterX = targetCenterX.coerceIn(full.left + halfCropW, full.right - halfCropW)
-        targetCenterY = targetCenterY.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
-
-        val minCenterXDist = Math.max(1f, Math.min(targetCenterX - full.left, full.right - targetCenterX))
-        val minCenterYDist = Math.max(1f, Math.min(targetCenterY - full.top, full.bottom - targetCenterY))
-        val zoomForWidth = full.width().toFloat() / (2f * minCenterXDist)
-        val zoomForHeight = full.height().toFloat() / (2f * minCenterYDist)
-        val boundaryMinZoom = Math.max(zoomForWidth, zoomForHeight)
-
-        targetZoom = Math.max(rawTargetZoom, boundaryMinZoom).coerceIn(1.0f, maxZoom)
+        targetCenterX = targetXBeforeCoerce.coerceIn(full.left + halfCropW, full.right - halfCropW)
+        targetCenterY = targetYBeforeCoerce.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
+        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera rot=$rotation sX=$sensorX sY=$sensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom")
     }
 
     private fun tickFaceTracking() {
@@ -1092,27 +1113,52 @@ class CameraEngine(private val context: Context) {
             return
         }
 
-        Log.d("STICAM_TRACK", "tickFaceTracking: currentCrop=(${currentCropCenter.x}, ${currentCropCenter.y}) zoom=$currentCropZoom target=($targetCenterX, $targetCenterY) zoom=$targetZoom")
         val full = sensorRect ?: return
-        
-        // --- Smooth Lerp System ---
-        val now = System.nanoTime()
-        lastUpdateTime = now
-        
-        var panFactor = 0.06f
-        var zoomFactor = 0.04f
+
+        // ── Velocity-damped lerp (talking head quality) ────────────────────────
+        // Instead of a fixed lerp fraction, we accumulate velocity toward the target
+        // and apply friction each tick. This produces a smooth ease-in/ease-out
+        // glide that feels like a professional broadcast camera operator.
+        //
+        // Tuning guide:
+        //   panAccel  : how eagerly the camera accelerates toward the face (lower = smoother)
+        //   friction  : how quickly velocity decays (higher = snappier stop)
+        //   zoomAccel : zoom acceleration (keep slower than pan for calm feel)
+        //   zoomFric  : zoom friction
+
+        val panAccel: Float
+        val friction: Float
+        val zoomAccel: Float
+        val zoomFric: Float
 
         if (isInitialEngage) {
-            panFactor = 0.03f
-            zoomFactor = 0.015f
-            if (Math.abs(currentCropZoom - targetZoom) < 0.05f) {
+            // Fast initial lock-on
+            panAccel  = 0.030f
+            friction  = 0.82f
+            zoomAccel = 0.015f
+            zoomFric  = 0.84f
+            val distToTargetX = Math.abs(currentCropCenter.x - targetCenterX)
+            val distToTargetY = Math.abs(currentCropCenter.y - targetCenterY)
+            val distToTargetZoom = Math.abs(currentCropZoom - targetZoom)
+            if ((distToTargetZoom < 0.1f && distToTargetX < 100f && distToTargetY < 100f) || consecutiveFaceFrames > 35) {
                 isInitialEngage = false
             }
+        } else {
+            // Steady-state: smooth cinematic pan, very slow zoom
+            panAccel  = 0.008f   // gentle — won't jerk even on fast head turns
+            friction  = 0.88f    // high friction for a floaty broadcast feel
+            zoomAccel = 0.004f
+            zoomFric  = 0.90f
         }
 
-        currentCropCenter.x += (targetCenterX - currentCropCenter.x) * panFactor
-        currentCropCenter.y += (targetCenterY - currentCropCenter.y) * panFactor
-        currentCropZoom += (targetZoom - currentCropZoom) * zoomFactor
+        // Accumulate velocity toward target, then apply friction
+        velX    = velX    * friction + (targetCenterX - currentCropCenter.x) * panAccel
+        velY    = velY    * friction + (targetCenterY - currentCropCenter.y) * panAccel
+        velZoom = velZoom * zoomFric + (targetZoom    - currentCropZoom)     * zoomAccel
+
+        currentCropCenter.x += velX
+        currentCropCenter.y += velY
+        currentCropZoom     += velZoom
 
         currentCropZoom = currentCropZoom.coerceIn(1.0f, maxZoom)
 

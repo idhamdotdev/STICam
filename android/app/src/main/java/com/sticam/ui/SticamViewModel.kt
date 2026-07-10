@@ -479,10 +479,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                 
                 if (cameraId != null && cameraId != _ui.value.selectedCameraId) {
                     _ui.value.cameras.find { it.id == cameraId }?.let { cam ->
-                        _ui.update { it.copy(selectedCameraId = cam.id) }
-                        loadSupportedResolutions(cam.id)
-                        // Ensure UI syncs back the new resolutions map to Windows Client
-                        sendSyncParamsToClient()
+                        selectCamera(cam.id)
                     }
                 } else if (resolution != null) {
                     val currentResString = "${_ui.value.preset.width}x${_ui.value.preset.height}"
