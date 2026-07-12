@@ -1,254 +1,142 @@
-# STICam — Professional Android Webcam System
+# STICam: Android Webcam System
 
 [![GitHub Stars](https://img.shields.io/github/stars/idhamdotdev/STICam?style=for-the-badge&color=2A7AE2&logo=github)](https://github.com/idhamdotdev/STICam/stargazers)
 [![GitHub Followers](https://img.shields.io/github/followers/idhamdotdev?style=for-the-badge&color=2A7AE2&logo=github)](https://github.com/idhamdotdev)
 [![License](https://img.shields.io/github/license/idhamdotdev/STICam?style=for-the-badge&color=2A7AE2)](LICENSE)
 
-Transform your Android device into a professional-grade PC webcam with full manual
-Camera2 hardware control — ISO, shutter, focus, and white balance — over Wi-Fi or USB.
+STICam is a high-performance system that streams low-latency H.264 video from an Android camera device to a Windows PC host over Wi-Fi or USB connection. The Windows application decodes the stream and exposes it as a DirectShow virtual webcam device or RTSP stream for use in video conferencing applications and broadcasting software.
 
-<!-- 
-### 📸 Screenshots
-![STICam App Screenshot](sticam_media/design_after_connected_mobile.png) 
--->
-
----
-
-## 🌟 Support & Attribution
-
-This project is 100% free and open-source. If you wish to fork, modify, or recreate this project:
-1. **Give Credit**: You must retain attribution to the original creator, **[@idhamdotdev](https://github.com/idhamdotdev)**, and link back to this repository.
-2. **Share-Alike**: Since this project is licensed under the **GPL-2.0 License**, any derivative projects you publish must also remain open-source and free under the same license.
-3. **Show Love**: Consider starring ⭐ the repository and following my profile to stay updated on future releases!
-
----
+## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  ANDROID (STICam Node)                                          │
-│  Camera2 (AE_OFF, AF_OFF)                                       │
-│       ↓ zero-copy Surface pipeline                              │
-│  MediaCodec H.264 Encoder                                       │
-│       ↓ Annex-B NALs  ←── SPS/PPS/Frame typed packets          │
-│  StreamServer (TCP :8765)                                       │
-└────────────────┬────────────────────────────────────────────────┘
-                 │  Wi-Fi or USB (ADB forward)
-┌────────────────▼────────────────────────────────────────────────┐
-│  WINDOWS (STICam Host)                                          │
-│  H264Receiver → VideoDecoder (FFmpeg.AutoGen)                   │
-│       ↓ Bitmap frames                                           │
-│  PictureBox preview  +  VirtualCameraManager                    │
-│       ↓                                                         │
-│  STICam Camera (DirectShow) OR RTSP rtsp://127.0.0.1:8554/...  │
-└─────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|  ANDROID (STICam Node)                                          |
+|  Camera2 API (Manual AE, AF, AWB control)                       |
+|       |                                                         |
+|       v Zero-copy Surface pipeline                              |
+|  MediaCodec H.264 Encoder                                       |
+|       |                                                         |
+|       v Annex-B NAL units (SPS, PPS, Frame packets)             |
+|  StreamServer (TCP Port 8765)                                   |
++-------------------------------+---------------------------------+
+                                |
+                                | Wi-Fi or USB (ADB port forward)
+                                v
++-----------------------------------------------------------------+
+|  WINDOWS (STICam Host)                                          |
+|  H264Receiver -> VideoDecoder (FFmpeg.AutoGen)                  |
+|       |                                                         |
+|       v BGR24 Bitmap frames                                     |
+|  PictureBox Preview + VirtualCameraManager                      |
+|       |                                                         |
+|       +-> STICam Camera (DirectShow Virtual Cam)                |
+|       +-> RTSP Server (rtsp://127.0.0.1:8554/sticam)            |
++-----------------------------------------------------------------+
 ```
 
----
+## Features
 
-## Project Layout
+* **Low-Latency Streaming**: Encodes video on-device using Android MediaCodec H.264 and streams via raw TCP packets.
+* **Manual Camera Controls**: Full remote control over ISO, shutter speed, focus distance, exposure compensation, white balance Kelvin temperature, and flashlight torch mode.
+* **Face Tracking**: On-device real-time face detection using Google ML Kit. Includes:
+  * A noise gate and exponential moving average filter to eliminate frame-to-frame jitter.
+  * Auto-zooming and panning to keep the user's face framed at 58% of the height.
+  * Zero-sway, ease-out movement that stops instantly when the face is stationary.
+* **Dual Connection Modes**: Wi-Fi (direct TCP connection) and USB (automated ADB port forwarding configuration).
+* **Local Recording**: Saves direct H.264 stream muxed to MP4 files on the device storage with zero re-encoding overhead.
+* **Windows Virtual Webcam**: Registers as a DirectShow camera, making it compatible with Zoom, Microsoft Teams, Google Meet, and OBS Studio.
+* **RTSP Server Output**: Mounts an RTSP broadcast point via FFmpeg for integration into streaming setups.
+* **OpenGLES Rendering Pipeline**: Supports custom lookup tables (LUTs) and live AR filters.
 
-```
-STICam/
-├── android/                    # Kotlin / Jetpack Compose app (STICam Node)
-│   ├── app/src/main/java/com/sticam/
-│   │   ├── engine/
-│   │   │   ├── CameraEngine.kt         # Camera2 → MediaCodec H.264 pipeline
-│   │   │   └── RecordingSession.kt     # MediaMuxer MP4 local recording
-│   │   ├── server/
-│   │   │   └── StreamServer.kt         # TCP server + typed-packet protocol
-│   │   ├── ui/
-│   │   │   ├── components/
-│   │   │   │   └── HudComponents.kt    # OLED HUD sliders, badges, toggles
-│   │   │   ├── theme/Theme.kt          # Material3 dark / OLED color scheme
-│   │   │   ├── SticamScreen.kt         # Main HUD screen (Compose)
-│   │   │   └── SticamViewModel.kt      # State management + engine lifecycle
-│   │   ├── ConnectionMode.kt           # USB / Wi-Fi sealed class
-│   │   └── MainActivity.kt             # Entry point + permission handling
-│   └── ...
-│
-└── windows/SticamHost/                 # C# .NET 8 WinForms app (STICam Host)
-    ├── Adb/AdbForwarder.cs             # Automatic ADB port-forward polling
-    ├── Stream/
-    │   ├── H264Receiver.cs             # TCP client + typed-packet parser
-    │   └── VideoDecoder.cs             # FFmpeg.AutoGen H.264 → BGR24 Bitmap
-    ├── VirtualCamera/
-    │   ├── FfmpegPipe.cs               # BGR24 → ffmpeg stdin → RTSP/DirectShow
-    │   ├── VirtualCameraManager.cs     # OBS VirtualCam detection + fallback RTSP
-    │   └── MfNative.cs                 # Win11 22H2 MF P/Invoke (future)
-    ├── MainForm.cs                     # WinForms UI: preview + controls + log
-    └── STICamHost.csproj               # .NET 8 Windows target
-```
+## Project Structure
 
----
+* **android/**: Kotlin and Jetpack Compose codebase for the Android transmitter node.
+  * `app/src/main/java/com/sticam/engine/`: Capture pipeline, MediaCodec encoding, and ML Kit face detection.
+  * `app/src/main/java/com/sticam/server/`: StreamServer handling the custom TCP packet protocol.
+  * `app/src/main/java/com/sticam/ui/`: Compose layouts, custom HUD controls, and ViewModel state management.
+* **windows/**: C# .NET 8 WinForms codebase for the Windows host receiver.
+  * `SticamHost/Adb/`: Automatic ADB polling and port-forwarding management.
+  * `SticamHost/Stream/`: TCP stream reception and FFmpeg decoding pipeline.
+  * `SticamHost/VirtualCamera/`: DirectShow virtual webcam registration and FFmpeg RTSP pipeline.
 
-## Android — Build & Deploy
+## Build and Installation
 
-### Prerequisites
+### Android Client
 
-| Tool | Version | Notes |
-|------|---------|-------|
-| Android Studio | Hedgehog 2023.1+ | or IntelliJ IDEA with Android plugin |
-| JDK | 17+ | bundled with Android Studio |
-| Android device | API 26+ (Android 8.0+) | Camera2 full-manual support |
-| USB cable | — | for USB mode; Wi-Fi needs same LAN |
+#### Prerequisites
+* Android Studio Hedgehog 2023.1 or newer.
+* JDK 17 or newer.
+* Android device running API 26 (Android 8.0) or higher with Camera2 manual hardware support.
 
-### Steps
+#### Build Steps
+1. Open the `android/` directory in Android Studio.
+2. Allow Gradle sync to complete.
+3. Enable USB Debugging on the Android device and connect it.
+4. Run the project or generate a debug APK using:
+   ```powershell
+   cd android
+   ./gradlew.bat assembleDebug
+   ```
 
-```powershell
-# 1. Open the android/ folder in Android Studio as the project root
-#    (it contains settings.gradle at the top level)
+### Windows Host
 
-# 2. Let Gradle sync finish
+#### Prerequisites
+* .NET 8.0 SDK.
+* Visual Studio 2022 or `dotnet` CLI tool.
+* Binaries for ADB and FFmpeg.
 
-# 3. Enable Developer Options + USB Debugging on your Android device
+#### Setup External Tools
+Download and place the following files in the `windows/SticamHost/tools/` directory:
+* From Android Platform Tools (SDK): `adb.exe`, `AdbWinApi.dll`, `AdbWinUsbApi.dll`.
+* From FFmpeg Essentials Build: `ffmpeg.exe`.
 
-# 4. Run → "app" on your connected device (or Build → Generate Signed APK)
-```
+#### Build Steps
+1. Navigate to the host project folder:
+   ```powershell
+   cd windows/SticamHost
+   dotnet restore
+   dotnet build -c Release
+   ```
+2. Launch the host application located in `windows/SticamHost/bin/Release/net8.0-windows/STICamHost.exe`.
 
-### First Launch
+## How to Use
 
-1. Grant **Camera** permission when prompted.
-2. Choose **USB** or **Wi-Fi** mode from the connection row at the bottom.
-3. For Wi-Fi — enter the Windows PC IP shown in `ipconfig`.
-4. Tap **STREAM** — the device starts the TCP server on port **8765**.
-5. Connect from the Windows Host app.
+1. Grant Camera permission to the Android app on launch.
+2. Select USB or Wi-Fi mode on both the device and host application.
+3. **USB Mode**: Click Connect in the Windows Host application. ADB port-forwarding will initialize automatically.
+4. **Wi-Fi Mode**: Enter the Android device's local IP address in the Windows Host app and click Connect.
+5. Once connected, click Start Virtual Cam in the Host application to enable the virtual webcam driver or output the RTSP stream.
 
-### Local MP4 Recording
+## Wire Protocol
 
-- Tap the **⬤ REC** button in the HUD — records to `Movies/STICam/` on device storage.
-- No re-encoding: the same H.264 stream is muxed directly to MP4.
-- Requires `WRITE_EXTERNAL_STORAGE` on API < 29 (API 29+ uses scoped storage automatically).
-
----
-
-## Windows Host — Build & Run
-
-### Prerequisites
-
-| Tool | Version | Notes |
-|------|---------|-------|
-| .NET SDK | 8.0 | `winget install Microsoft.DotNet.SDK.8` |
-| Visual Studio 2022 | Community+ | or `dotnet build` from CLI |
-| ffmpeg.exe | 6.x | See below |
-| adb.exe | 35+ | See below |
-
-### Place Required Tools
-
-```
-windows/SticamHost/tools/
-    adb.exe             ← from Android Platform Tools
-    AdbWinApi.dll       ← same package
-    AdbWinUsbApi.dll    ← same package
-    ffmpeg.exe          ← from https://www.gyan.dev/ffmpeg/builds/
-                           (ffmpeg-release-essentials.zip, essentials build)
-```
-
-**Download links:**
-- ADB: https://developer.android.com/tools/releases/platform-tools
-- FFmpeg: https://www.gyan.dev/ffmpeg/builds/ → `ffmpeg-release-essentials.zip`
-
-### Build
-
-```powershell
-cd "windows\SticamHost"
-dotnet restore
-dotnet build -c Release
-# Or open STICamHost.csproj in Visual Studio → F5
-```
-
-### Connect
-
-1. Launch **STICamHost.exe**.
-2. **USB mode** — just click ▶ CONNECT. ADB forward runs automatically.
-3. **Wi-Fi mode** — select Wi-Fi, type the Android device IP, click ▶ CONNECT.
-4. The preview window shows the live H.264 feed once SPS/PPS are received.
-
-### Virtual Webcam Output
-
-| Path | When Available | Usage |
-|------|---------------|-------|
-| **STICam Camera** | Always (registered automatically on launch) | Appears as a real webcam in Zoom/Teams/Meet |
-| **RTSP stream** | Always (needs ffmpeg.exe) | Add as Media Source in OBS, or open in VLC |
-
-Click **▶ START VIRTUAL CAM** — the app auto-selects the best path.
-
-To use RTSP in OBS:
-- Sources → + → Media Source → uncheck "Local file"
-- Input: `rtsp://127.0.0.1:8554/sticam`
-
----
-
-## Typed-Packet Wire Protocol
-
-All traffic between Android and Windows uses a 5-byte header:
-
+All data exchanged between the client and host uses a 5-byte header:
 ```
 [type : u8] [length : u32 big-endian] [payload : length bytes]
 ```
 
+The message types are defined as follows:
+
 | Type | Hex | Direction | Payload |
 |------|-----|-----------|---------|
-| Frame | 0x00 | Android → Windows | Annex-B H.264 NAL unit |
-| SPS | 0x01 | Android → Windows | Raw SPS NAL |
-| PPS | 0x02 | Android → Windows | Raw PPS NAL |
-| Cmd | 0x10 | Windows → Android | UTF-8 JSON command |
-
-### JSON Commands (Windows → Android)
-
-```json
-{ "cmd": "set_params", "iso": 400, "shutterNs": 16666666, "focusDiopters": 0.0, "wbKelvin": 5500 }
-{ "cmd": "request_idr" }
-```
-
----
+| Frame | 0x00 | Android to Windows | H.264 Annex-B NAL unit |
+| SPS | 0x01 | Android to Windows | H.264 Sequence Parameter Set NAL |
+| PPS | 0x02 | Android to Windows | H.264 Picture Parameter Set NAL |
+| Command | 0x10 | Windows to Android | UTF-8 JSON parameters |
 
 ## Camera Controls Reference
 
-| Parameter | Android API | Range | Notes |
+| Parameter | Android API | Scope | Notes |
 |-----------|------------|-------|-------|
-| ISO | `SENSOR_SENSITIVITY` | Device-reported | Read from `SENSOR_INFO_SENSITIVITY_RANGE` |
-| Shutter | `SENSOR_EXPOSURE_TIME` | Device-reported ns | Read from `SENSOR_INFO_EXPOSURE_TIME_RANGE` |
-| Focus | `LENS_FOCUS_DISTANCE` | 0 – max diopters | 0 = infinity, max = macro |
-| White Balance | `COLOR_CORRECTION_GAINS` | 2000–10000 K | Tanner Helland Kelvin→RGGB approximation |
+| ISO | `SENSOR_SENSITIVITY` | Device range | Controlled by `SENSOR_INFO_SENSITIVITY_RANGE` |
+| Shutter | `SENSOR_EXPOSURE_TIME` | Device range | Controlled by `SENSOR_INFO_EXPOSURE_TIME_RANGE` |
+| Focus | `LENS_FOCUS_DISTANCE` | 0 to max diopters | 0 corresponds to infinity, max to macro |
+| White Balance | `COLOR_CORRECTION_GAINS` | 2000K to 10000K | Kelvin to RGB approximation |
 
-All four axes are set with `CONTROL_AE_MODE_OFF` + `CONTROL_AF_MODE_OFF` + `CONTROL_AWB_MODE_OFF`
-so the hardware never overrides manual values.
+## License
 
----
+This project is licensed under the GNU General Public License v2.0. Refer to the LICENSE file for details.
 
-
-
-## Troubleshooting
-
-### Android — "No camera permission"
-- Go to Settings → Apps → STICam → Permissions → Camera → Allow.
-
-### Android — Black preview but streaming works
-- Confirm the `TextureView` `SurfaceTexture` is valid before calling `engine.start()`.
-- The `SticamViewModel` waits for `onSurfaceTextureAvailable` before starting.
-
-### Windows — "Decoder initialized" but no video
-- Check that SPS + PPS packets arrived before the first frame (watch the log).
-- Try clicking **▶ CONNECT** again — IDR frame triggers a new config sequence.
-
-### Windows — ADB forward fails
-- Ensure USB Debugging is enabled and the device is trusted on this PC.
-- Run `adb devices` in a terminal — the device should appear as `device` (not `unauthorized`).
-
-### Windows — RTSP stream not available in OBS
-- Confirm `ffmpeg.exe` is in `tools/` next to `STICamHost.exe`.
-- ffmpeg log appears in the Host app's LOG pane.
-
-### Windows — Build error: FFmpeg.AutoGen missing
-- Run `dotnet restore` — NuGet pulls `FFmpeg.AutoGen` and `FFmpeg.runtime.windows-x64` automatically.
-
----
-
-## License & Third-Party Credits
-
-This project is licensed under the **GNU General Public License v2.0** - see the [LICENSE](LICENSE) file for details.
-
-### Third-Party Software and Licenses
-* **ADB (Android Debug Bridge)**: Developed by Google, distributed under the **Apache License 2.0**.
-* **FFmpeg**: Bundled and distributed under the **GNU GPL v2.0**.
-* **OBS Virtual Camera**: DirectShow components (`obs-virtualcam-module64.dll`) from the OBS Project, distributed under the **GNU GPL v2.0**.
+### Third-Party Software
+* **Android Debug Bridge**: Distributed under the Apache License 2.0.
+* **FFmpeg**: Distributed under the GNU GPL v2.0.
+* **OBS Virtual Camera**: DirectShow components distributed under the GNU GPL v2.0.
