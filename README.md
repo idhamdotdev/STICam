@@ -14,6 +14,19 @@ STICam streams low-latency H.264 video from an Android device to a Windows PC ov
 * **Dual Connection Modes**: Wi-Fi (wireless connection) and USB (automated ADB port forwarding configuration).
 * **Local Recording**: Save the stream directly as an MP4 file on the phone's storage with zero quality loss.
 * **Virtual Webcam & RTSP**: Registers a DirectShow camera on Windows or exposes an RTSP stream for OBS Studio and VLC.
+## Installation
+
+### 1. Download the Files
+Go to the [Releases](https://github.com/idhamdotdev/STICam/releases) page and download:
+* The Android client package (`Sticam.apk`).
+* The Windows Host installer (`STICamHost_Installer.exe`).
+
+### 2. Install the Android Client
+* Transfer `Sticam.apk` to your Android device.
+* Open the file to install it (enable installation from unknown sources if prompted).
+
+### 3. Install the Windows Host
+* Run `STICamHost_Installer.exe` on your Windows PC and follow the setup wizard.
 
 ## How to Use
 
