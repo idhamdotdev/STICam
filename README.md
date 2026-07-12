@@ -38,7 +38,7 @@ STICam is a high-performance system that streams low-latency H.264 video from an
 
 * **Low-Latency Streaming**: Encodes video on-device using Android MediaCodec H.264 and streams via raw TCP packets.
 * **Manual Camera Controls**: Full remote control over ISO, shutter speed, focus distance, exposure compensation, white balance Kelvin temperature, and flashlight torch mode.
-* **Face Tracking**: On-device real-time face detection using Google ML Kit. Includes:
+* **Face Tracking**: On-device real-time face detection using Google ML Kit (completely free, running locally and offline with no cloud server costs). Includes:
   * A noise gate and exponential moving average filter to eliminate frame-to-frame jitter.
   * Auto-zooming and panning to keep the user's face framed at 58% of the height.
   * Zero-sway, ease-out movement that stops instantly when the face is stationary.
@@ -140,3 +140,4 @@ This project is licensed under the GNU General Public License v2.0. Refer to the
 * **Android Debug Bridge**: Distributed under the Apache License 2.0.
 * **FFmpeg**: Distributed under the GNU GPL v2.0.
 * **OBS Virtual Camera**: DirectShow components distributed under the GNU GPL v2.0.
+* **Google ML Kit**: Face detection SDK distributed under Google APIs Terms of Service (free for commercial and public on-device local use).
