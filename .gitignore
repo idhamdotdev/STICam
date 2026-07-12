@@ -46,6 +46,7 @@ desktop.ini
 backup/
 Builds/
 release/
+release_compressed/
 diff_camera.txt
 original_glrenderer.txt
 windows/SticamHost/logcat_dump.txt
