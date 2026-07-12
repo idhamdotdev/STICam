@@ -40,3 +40,24 @@ ios/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ── Local Backups, Builds & Dumps ──────────────────────────────────
+*backup*
+backup/
+Builds/
+release/
+diff_camera.txt
+original_glrenderer.txt
+windows/SticamHost/logcat_dump.txt
+windows/Output/
+android/uidump*.xml
+*screen.png
+*.mp4
+
+# ── Installer Assets & Installer Script ────────────────────────────
+windows/SticamInstaller.iss
+windows/installer_icon.ico
+windows/sidebar_image.bmp
+windows/sidebar_image.png
+windows/small_image.bmp
+
