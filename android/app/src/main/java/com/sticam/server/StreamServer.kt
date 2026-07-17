@@ -7,14 +7,14 @@ import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.io.InputStream
 import java.io.OutputStream
-import java.net.ServerSocket
 import java.net.Socket
 
 /**
  * Sticam Stream Server
  *
- * Listens on a TCP port and serves encoded H.264 frames from CameraEngine
- * using the typed-packet protocol (compatible with PortablePad wire format).
+ * Connects out to the Windows host over TCP and serves encoded H.264 frames
+ * from CameraEngine using the typed-packet protocol (compatible with
+ * PortablePad wire format).
  *
  * Wire protocol (upstream — Android → Windows):
  *   [1B type] [4B big-endian length] [data]
