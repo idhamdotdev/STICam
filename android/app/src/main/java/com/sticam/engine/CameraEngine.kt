@@ -986,11 +986,23 @@ class CameraEngine(private val context: Context) {
             targetCenterY = currentCropCenter.y
             
             noFaceDetectedFramesCount++
-            
+
             // After ~1.5 seconds (45 frames) of no detection, gently lerp zoom toward 1.0x
             // so the wider FOV helps the detector re-acquire the face.
-            if (noFaceDetectedFramesCount > 45 && currentCropZoom > 1.05f) {
-                targetZoom = targetZoom + (1.0f - targetZoom) * 0.02f
+            if (noFaceDetectedFramesCount > 45) {
+                if (currentCropZoom > 1.05f) {
+                    targetZoom = targetZoom + (1.0f - targetZoom) * 0.02f
+                }
+                // Zooming out alone cannot guarantee re-acquisition: the 16:9
+                // output window on the 4:3 sensor always crops a vertical band,
+                // so a crop frozen off-target (e.g. on the wall) can keep the
+                // face outside the detector's view forever. Aim the search
+                // window back at the sensor center and let tickFaceTracking's
+                // EMA glide it there smoothly.
+                sensorRect?.let { fullRect ->
+                    targetCenterX = fullRect.exactCenterX()
+                    targetCenterY = fullRect.exactCenterY()
+                }
             }
         }
         Log.i("STICAM_TRACK", "processFaceResult: detected=${meshData != null} target=($targetCenterX, $targetCenterY) zoom=$targetZoom")
