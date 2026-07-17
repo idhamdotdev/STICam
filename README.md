@@ -46,6 +46,7 @@ Go to the [Releases](https://github.com/idhamdotdev/STICam/releases) page and do
   cd android
   ./gradlew.bat assembleDebug
   ```
+* **Release signing**: copy `android/keystore.properties.example` to `android/keystore.properties` and generate a keystore with the `keytool` command shown inside it. `./gradlew.bat assembleRelease` then signs with your key (falls back to the debug key if the file is missing).
 
 ### Windows Host
 1. Download `adb.exe`, `AdbWinApi.dll`, and `AdbWinUsbApi.dll` (from Android Platform Tools) and `ffmpeg.exe` (from FFmpeg Essentials).
