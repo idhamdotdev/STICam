@@ -1017,42 +1017,28 @@ class CameraEngine(private val context: Context) {
         val full = sensorRect ?: return
         val bounds = meshData.bounds
 
-        // The detection frames come from the GL pipeline, whose readback is
-        // vertically flipped relative to the displayed stream (GL bottom-left
-        // origin): X matches the view, Y is inverted. Convert to true view
-        // coordinates first — feeding the raw Y into the mapping turns the
-        // vertical axis into a positive-feedback loop that runs the crop off
-        // the face until it pins at the sensor edge (then detection lock-out).
-        val viewFaceX = bounds.centerX()
-        val viewFaceY = 1.0f - bounds.centerY()
-
-        // Framing anchor: instead of centering the face itself, center a
-        // virtual point offset from it in view space — the face then lands at
-        // trackAnchorX of the frame while every downstream stage (rotation
-        // mapping, smoothing, clamping) stays unchanged.
-        val anchoredFaceX = viewFaceX + (0.5f - trackAnchorX)
-
-        // Map view space to sensor space using the sensor orientation.
-        val nsX: Float
-        val nsY: Float
-        when (sensorOrientation) {
-            90 -> {
-                nsX = viewFaceY
-                nsY = 1.0f - anchoredFaceX
-            }
-            180 -> {
-                nsX = 1.0f - anchoredFaceX
-                nsY = 1.0f - viewFaceY
-            }
-            270 -> {
-                nsX = 1.0f - viewFaceY
-                nsY = anchoredFaceX
-            }
-            else -> {
-                nsX = anchoredFaceX
-                nsY = viewFaceY
-            }
+        // The detector is fed raw ImageReader frames straight off the camera
+        // (yuvImageToBitmap applies no rotation), and SCALER_CROP_REGION
+        // applies to that stream too — so MediaPipe's normalized coordinates
+        // are ALREADY crop-relative sensor space. No orientation remap is
+        // needed for tracking, regardless of how the phone is mounted; the
+        // old view-space mapping was an ML Kit leftover whose wrong axis
+        // turned tracking into a positive-feedback runaway.
+        //
+        // Only the framing anchor is a view-space concept ("left third of
+        // what the PC shows"), so its offset must rotate with the display
+        // orientation (outputRotation) to land on the right sensor axis.
+        val dxView = 0.5f - trackAnchorX
+        val anchorOffX: Float
+        val anchorOffY: Float
+        when (((outputRotation % 360) + 360) % 360) {
+            90   -> { anchorOffX = 0f;      anchorOffY = dxView }
+            180  -> { anchorOffX = -dxView; anchorOffY = 0f }
+            270  -> { anchorOffX = 0f;      anchorOffY = -dxView }
+            else -> { anchorOffX = dxView;  anchorOffY = 0f }
         }
+        val nsX = bounds.centerX() + anchorOffX
+        val nsY = bounds.centerY() + anchorOffY
 
         // Apply a soft noise gate and EMA filter directly to the raw sensor coordinates (nsX, nsY).
         // If the change in face position is very small (less than 0.008 of sensor width/height), 
@@ -1123,7 +1109,7 @@ class CameraEngine(private val context: Context) {
 
         targetCenterX = targetXBeforeCoerce.coerceIn(full.left + halfCropW, full.right - halfCropW)
         targetCenterY = targetYBeforeCoerce.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
-        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera nsX=$nsX nsY=$nsY smX=$smoothedSensorX smY=$smoothedSensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom rawFH=$rawFaceHeight smoothFH=$smoothedFaceHeight rawTZ=$rawTargetZoom initEngage=$isInitialEngage")
+        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera rawX=${bounds.centerX()} rawY=${bounds.centerY()} outRot=$outputRotation nsX=$nsX nsY=$nsY smX=$smoothedSensorX smY=$smoothedSensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom rawFH=$rawFaceHeight smoothFH=$smoothedFaceHeight rawTZ=$rawTargetZoom initEngage=$isInitialEngage")
     }
 
     private fun tickFaceTracking() {
