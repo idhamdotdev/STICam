@@ -16,26 +16,11 @@ import android.util.Size
 import android.view.Surface
 import com.sticam.engine.gl.GlRenderer
 import androidx.annotation.RequiresPermission
+import android.graphics.Bitmap
 import android.graphics.PointF
 import android.graphics.Rect
-import android.media.ImageReader
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.Face
-import com.google.mlkit.vision.face.FaceDetection
-import com.google.mlkit.vision.face.FaceDetector
-import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.mlkit.vision.face.FaceLandmark
 import android.graphics.RectF
-
-data class ArFaceData(
-    val bounds: RectF, // Normalized 0.0 - 1.0 relative to visible screen
-    val leftEye: PointF?,
-    val rightEye: PointF?,
-    val noseBase: PointF?,
-    val mouthBottom: PointF?,
-    val leftCheek: PointF?,
-    val rightCheek: PointF?
-)
+import android.media.ImageReader
 
 /**
  * Sticam Camera Engine — zero-copy Camera2→MediaCodec H.264 pipeline.
@@ -46,6 +31,13 @@ class CameraEngine(private val context: Context) {
     companion object {
         private const val TAG = "SticamEngine"
         private const val DEFAULT_IDR_SEC = 1.0f
+
+        /** Maps mesh filter names to their PNG asset paths */
+        val MESH_FILTER_ASSETS = mapOf(
+            "TigerPaint" to "filters/tiger_paint.png",
+            "Skull" to "filters/skull_paint.png",
+            "Ironman" to "filters/ironman_paint.png"
+        )
     }
 
     private val camMgr = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
@@ -104,7 +96,15 @@ class CameraEngine(private val context: Context) {
             } else if (!isZeroCopy) {
                 glRenderer?.setArFilter(value)
             }
+            // Route mesh-type filters to FaceMeshRenderer
+            val meshAsset = MESH_FILTER_ASSETS[value]
+            if (meshAsset != null) {
+                glRenderer?.setMeshFilter(value, meshAsset)
+            } else {
+                glRenderer?.setMeshFilter("None", null)
+            }
         }
+
 
     // Orientation & Dimensions
     @Volatile var isFrontCamera: Boolean = false
@@ -118,25 +118,29 @@ class CameraEngine(private val context: Context) {
     /**
      * Total rotation the GL encoder must apply to produce an upright stream on the PC.
      * Front camera: sensor physically mounted rotated → combine sensor + user manual offset.
-     * Back camera:  zero-copy path handles rotation via metadata; GL path only needs user offset.
+     * Back camera:  SurfaceTexture transform matrix already corrects sensor orientation;
+     *               only user manual offset is needed.
      */
-    private val encoderRotation: Int
+    private val baseRotation: Int
         get() = if (isFrontCamera) {
-            (sensorOrientation + outputRotation) % 360
+            (360 - sensorOrientation + 180) % 360
         } else {
-            outputRotation
+            (360 - sensorOrientation) % 360
         }
+
+    private val encoderRotation: Int
+        get() = (baseRotation + outputRotation) % 360
 
     // AI Face Tracking
     private var imageReader: ImageReader? = null
-    private var faceDetector: FaceDetector? = null
+    private var faceLandmarkerHelper: FaceLandmarkerHelper? = null
     private val isDetectorBusy = java.util.concurrent.atomic.AtomicBoolean(false)
     private val currentCropCenter = PointF()
     private var currentCropZoom = 1.0f
     @Volatile private var activeFaceCropRect: Rect? = null
     @Volatile private var lastAppliedCropRect: Rect? = null
     var onFaceZoomChanged: ((zoom: Float) -> Unit)? = null
-    var onArFaceDataUpdated: ((ArFaceData?) -> Unit)? = null
+    var onArFaceDataUpdated: ((ArFaceMeshData?) -> Unit)? = null
     private var lastUpdateTime = 0L
 
     private var targetCenterX = 0f
@@ -347,7 +351,7 @@ class CameraEngine(private val context: Context) {
         encSurface?.release(); encSurface = null
         
         imageReader?.close(); imageReader = null
-        faceDetector?.close(); faceDetector = null
+        faceLandmarkerHelper?.close(); faceLandmarkerHelper = null
         isDetectorBusy.set(false)
         
         if (!keepThreads) {
@@ -379,6 +383,7 @@ class CameraEngine(private val context: Context) {
         gravityRotation = rotationDegrees
         // Push the corrected total rotation (sensor + manual) to the live GL renderer
         glRenderer?.rotationDegrees = encoderRotation
+        glRenderer?.outputRotation = rotationDegrees
         onOrientationChanged?.invoke()
     }
 
@@ -473,19 +478,23 @@ class CameraEngine(private val context: Context) {
             preview?.let { outputs.add(it) }
             outputs.add(enc)
             
-            cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(s: CameraCaptureSession) {
-                    session = s
-                    try {
-                        startRepeating(s, preview, true)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to start repeating request (Camera already closed?)", e)
+            try {
+                cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
+                    override fun onConfigured(s: CameraCaptureSession) {
+                        session = s
+                        try {
+                            startRepeating(s, preview, true)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to start repeating request (Camera already closed?)", e)
+                        }
                     }
-                }
-                override fun onConfigureFailed(s: CameraCaptureSession) {
-                    Log.e(TAG, "Session config failed")
-                }
-            }, camHandler)
+                    override fun onConfigureFailed(s: CameraCaptureSession) {
+                        Log.e(TAG, "Session config failed")
+                    }
+                }, camHandler)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to create capture session (zero-copy)", e)
+            }
         } else {
             // GL LUT/AR PATH
             if (preview != null) {
@@ -493,24 +502,29 @@ class CameraEngine(private val context: Context) {
                 val ch = captureSize.height
                 // encoderRotation = sensor orientation + user manual offset (for front camera)
                 // so the PC always receives an upright stream regardless of camera facing.
-                glRenderer = GlRenderer(preview, enc, cw, ch, outW, outH, encoderRotation, isFrontCamera) { glInputSurface ->
+                glRenderer = GlRenderer(context, preview, enc, cw, ch, outW, outH, encoderRotation, isFrontCamera, sensorOrientation) { glInputSurface ->
+                    glRenderer?.outputRotation = outputRotation
                     glRenderer?.setFilter(activeLutFilter)
                     glRenderer?.setArFilter(activeArFilter)
                     outputs.add(glInputSurface)
-                    cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
-                        override fun onConfigured(s: CameraCaptureSession) {
-                            session = s
-                            glRenderer?.attachWindowSurfaces()
-                            try {
-                                startRepeating(s, glInputSurface, false)
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Failed to start repeating request", e)
+                    try {
+                        cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
+                            override fun onConfigured(s: CameraCaptureSession) {
+                                session = s
+                                glRenderer?.attachWindowSurfaces()
+                                try {
+                                    startRepeating(s, glInputSurface, false)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "Failed to start repeating request", e)
+                                }
                             }
-                        }
-                        override fun onConfigureFailed(s: CameraCaptureSession) {
-                            Log.e(TAG, "Session config failed")
-                        }
-                    }, camHandler)
+                            override fun onConfigureFailed(s: CameraCaptureSession) {
+                                Log.e(TAG, "Session config failed")
+                            }
+                        }, camHandler)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to create capture session (GL path)", e)
+                    }
                 }
             }
         }
@@ -851,8 +865,8 @@ class CameraEngine(private val context: Context) {
         
         val targetRatio = width.toFloat() / height.toFloat()
         
-        // ML Kit face detection must run on a tiny frame (e.g. 320x180 or 640x360) for performance.
-        // However, it MUST have the same aspect ratio as the encoder output, otherwise the Camera HAL
+        // MediaPipe face detection runs on a tiny frame (e.g. 320x180 or 640x360) for performance.
+        // It MUST have the same aspect ratio as the encoder output, otherwise the Camera HAL
         // will crop the FOV differently for the two streams, causing tracker mapping math to break.
         val matchingAspectSizes = yuvSizes?.filter { 
             Math.abs(it.width.toFloat() / it.height.toFloat() - targetRatio) < 0.1 
@@ -865,7 +879,12 @@ class CameraEngine(private val context: Context) {
             // Fallback if yuvSizes is null
             ?: Size(640, 360)
             
-        Log.i(TAG, "ImageReader selected tiny resolution: ${yuvSize.width}x${yuvSize.height} for ML Kit (Output is ${width}x${height})")
+        Log.i(TAG, "ImageReader selected tiny resolution: ${yuvSize.width}x${yuvSize.height} for MediaPipe (Output is ${width}x${height})")
+
+        // Initialize MediaPipe Face Landmarker
+        if (faceLandmarkerHelper == null) {
+            faceLandmarkerHelper = FaceLandmarkerHelper(context).also { it.initialize(useGpuDelegate = false) }
+        }
         
         imageReader = android.media.ImageReader.newInstance(
             yuvSize.width,
@@ -875,36 +894,27 @@ class CameraEngine(private val context: Context) {
         ).apply {
             setOnImageAvailableListener({ reader ->
                 val image = runCatching { reader.acquireLatestImage() }.getOrNull() ?: return@setOnImageAvailableListener
-                if (isFaceTrackingEnabled && isDetectorBusy.compareAndSet(false, true)) {
-                    val rotation = getRotationCompensation()
-                    // Capture width/height inside runCatching — image could be invalid if
-                    // the ImageReader was closed while this callback was queued
-                    val imgW: Int
-                    val imgH: Int
-                    val inputImage: InputImage
+                if ((isFaceTrackingEnabled || activeArFilter != "None") && isDetectorBusy.compareAndSet(false, true)) {
+                    // Convert YUV Image to Bitmap for MediaPipe
+                    val bitmap: Bitmap
                     try {
-                        imgW = image.width
-                        imgH = image.height
-                        inputImage = InputImage.fromMediaImage(image, rotation)
+                        bitmap = yuvImageToBitmap(image)
                     } catch (e: Exception) {
-                        Log.w(TAG, "Image invalid before processing: ${e.message}")
+                        Log.w(TAG, "Image conversion failed: ${e.message}")
                         isDetectorBusy.set(false)
                         runCatching { image.close() }
                         return@setOnImageAvailableListener
                     }
-                    getFaceDetector().process(inputImage)
-                        .addOnSuccessListener { faces ->
-                            camHandler?.post {
-                                updateFaceTracking(faces, imgW, imgH, rotation)
-                            }
-                        }
-                        .addOnFailureListener { e ->
-                            Log.e(TAG, "Face detection failed", e)
-                        }
-                        .addOnCompleteListener {
-                            isDetectorBusy.set(false)
-                            runCatching { image.close() }
-                        }
+                    runCatching { image.close() }
+
+                    // Run MediaPipe detection synchronously on the detect thread
+                    val meshData = faceLandmarkerHelper?.detectBitmap(bitmap)
+                    bitmap.recycle()
+
+                    camHandler?.post {
+                        processFaceResult(meshData)
+                    }
+                    isDetectorBusy.set(false)
                 } else {
                     runCatching { image.close() }
                 }
@@ -913,92 +923,49 @@ class CameraEngine(private val context: Context) {
         Log.i(TAG, "ImageReader configured for Face Tracking: ${yuvSize.width}x${yuvSize.height}")
     }
 
-    private fun getFaceDetector(): FaceDetector {
-        var detector = faceDetector
-        if (detector == null) {
-            val options = FaceDetectorOptions.Builder()
-                .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
-                .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
-                .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-                .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
-                .setMinFaceSize(0.04f) // Allow detecting smaller faces when the user goes far back
-                .build()
-            detector = FaceDetection.getClient(options)
-            faceDetector = detector
-        }
-        return detector
+    /**
+     * Convert a YUV_420_888 Image to an ARGB_8888 Bitmap for MediaPipe.
+     * This replaces ML Kit's InputImage.fromMediaImage() which handled this internally.
+     */
+    private fun yuvImageToBitmap(image: android.media.Image): Bitmap {
+        val yBuffer = image.planes[0].buffer
+        val uBuffer = image.planes[1].buffer
+        val vBuffer = image.planes[2].buffer
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+
+        val yuvImage = android.graphics.YuvImage(nv21, android.graphics.ImageFormat.NV21, image.width, image.height, null)
+        val out = java.io.ByteArrayOutputStream()
+        yuvImage.compressToJpeg(android.graphics.Rect(0, 0, image.width, image.height), 90, out)
+        val jpegBytes = out.toByteArray()
+        return android.graphics.BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.size)
     }
 
-    private fun getRotationCompensation(): Int {
-        val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
-        val display = runCatching {
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R) {
-                val dm = context.getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
-                dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
-            } else {
-                @Suppress("DEPRECATION")
-                windowManager.defaultDisplay
-            }
-        }.getOrNull()
-        val rotation = display?.rotation ?: Surface.ROTATION_0
-        val deviceRotationDegrees = when (rotation) {
-            Surface.ROTATION_0 -> 0
-            Surface.ROTATION_90 -> 90
-            Surface.ROTATION_180 -> 180
-            Surface.ROTATION_270 -> 270
-            else -> 0
-        }
-
-        val chars = runCatching { camMgr.getCameraCharacteristics(camDevice?.id ?: "0") }.getOrNull()
-        val facing = chars?.get(CameraCharacteristics.LENS_FACING)
-        val isFrontLens = facing == CameraCharacteristics.LENS_FACING_FRONT
-
-        // ML Kit requires the rotation compensation that maps the image to upright.
-        // For back camera:  (sensorOrientation - deviceRotation + 360) % 360
-        // For front camera: (sensorOrientation + deviceRotation) % 360
-        // Both formulas are the standard ML Kit recommendation.
-        val rotationCompensation = if (isFrontLens) {
-            (sensorOrientation + deviceRotationDegrees) % 360
-        } else {
-            (sensorOrientation - deviceRotationDegrees + 360) % 360
-        }
-        Log.d(TAG, "getRotationCompensation: isFront=$isFrontLens sensorOri=$sensorOrientation deviceRot=$deviceRotationDegrees compensation=$rotationCompensation")
-        return rotationCompensation
-    }
-
-    private fun updateFaceTracking(faces: List<Face>, imageWidth: Int, imageHeight: Int, rotation: Int) {
+    /**
+     * Process a MediaPipe face result — emit AR data and update face tracking crop.
+     * Replaces the old updateFaceTracking(faces: List<Face>, ...) overload.
+     */
+    private fun processFaceResult(meshData: ArFaceMeshData?) {
         if (sensorRect == null) return
         
-        if (faces.isNotEmpty()) {
+        if (meshData != null) {
             noFaceDetectedFramesCount = 0
-            val face = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() } ?: return
-            
-            // Calculate logical dimensions based on ML Kit image rotation
-            val logicalWidth = if (rotation == 90 || rotation == 270) imageHeight else imageWidth
-            val logicalHeight = if (rotation == 90 || rotation == 270) imageWidth else imageHeight
 
-            // Extract AR landmarks before 5-frame wait so AR is snappy
-            val lw = logicalWidth.toFloat()
-            val lh = logicalHeight.toFloat()
-            val arData = ArFaceData(
-                bounds = RectF(
-                    face.boundingBox.left / lw, face.boundingBox.top / lh,
-                    face.boundingBox.right / lw, face.boundingBox.bottom / lh
-                ),
-                leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position?.let { PointF(it.x / lw, it.y / lh) },
-                rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position?.let { PointF(it.x / lw, it.y / lh) },
-                noseBase = face.getLandmark(FaceLandmark.NOSE_BASE)?.position?.let { PointF(it.x / lw, it.y / lh) },
-                mouthBottom = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position?.let { PointF(it.x / lw, it.y / lh) },
-                leftCheek = face.getLandmark(FaceLandmark.LEFT_CHEEK)?.position?.let { PointF(it.x / lw, it.y / lh) },
-                rightCheek = face.getLandmark(FaceLandmark.RIGHT_CHEEK)?.position?.let { PointF(it.x / lw, it.y / lh) }
-            )
-            onArFaceDataUpdated?.invoke(arData)
-            glRenderer?.setArFaceData(arData)
+            // Emit AR data immediately so AR overlays are snappy
+            onArFaceDataUpdated?.invoke(meshData)
+            glRenderer?.setArFaceData(meshData)
             
             consecutiveFaceFrames++
             if (consecutiveFaceFrames < 2) return // wait 2 consecutive frames to filter noise
 
-            updateFaceTracking(face, logicalWidth, logicalHeight, rotation)
+            updateFaceTrackingFromMesh(meshData)
         } else {
             onArFaceDataUpdated?.invoke(null)
             glRenderer?.setArFaceData(null)
@@ -1015,50 +982,47 @@ class CameraEngine(private val context: Context) {
                 targetZoom = targetZoom + (1.0f - targetZoom) * 0.02f
             }
         }
-        Log.i("STICAM_TRACK", "updateFaceTracking: faces=${faces.size} target=($targetCenterX, $targetCenterY) zoom=$targetZoom")
+        Log.i("STICAM_TRACK", "processFaceResult: detected=${meshData != null} target=($targetCenterX, $targetCenterY) zoom=$targetZoom")
     }
 
-    private fun updateFaceTracking(face: Face, logicalWidth: Int, logicalHeight: Int, rotation: Int) {
+    /**
+     * Update face tracking crop/zoom from MediaPipe face mesh data.
+     * Replaces the old updateFaceTracking(face: Face, ...) overload.
+     * MediaPipe landmarks are already normalized 0..1 — no rotation compensation needed.
+     */
+    private fun updateFaceTrackingFromMesh(meshData: ArFaceMeshData) {
         val full = sensorRect ?: return
-        val box = face.boundingBox
+        val bounds = meshData.bounds
 
-        val faceCenterX = box.centerX().toFloat()
-        val faceCenterY = box.centerY().toFloat()
+        val faceCenterX = bounds.centerX()
+        val faceCenterY = bounds.centerY()
 
-        // Normalize face center to 0.0..1.0 in the rotated (upright) image space.
-        // Do NOT apply any mirror flip here — the rotation transform below maps
-        // correctly to sensor space regardless of camera facing direction.
-        val normX = (faceCenterX / logicalWidth).coerceIn(0f, 1f)
-        val normY = (faceCenterY / logicalHeight).coerceIn(0f, 1f)
-
-        // Rotate normalized image-space coordinates back to raw sensor space.
-        // These rotation cases undo what ML Kit's rotation compensation did to the image.
+        // MediaPipe landmarks are already in normalized 0..1 screen-space.
+        // Map directly to sensor space using the sensor orientation.
         val nsX: Float
         val nsY: Float
-        when (rotation) {
+        when (sensorOrientation) {
             90 -> {
-                // Image was rotated 90° CW relative to sensor → undo it
-                nsX = normY
-                nsY = 1.0f - normX
+                nsX = faceCenterY
+                nsY = 1.0f - faceCenterX
             }
             180 -> {
-                nsX = 1.0f - normX
-                nsY = 1.0f - normY
+                nsX = 1.0f - faceCenterX
+                nsY = 1.0f - faceCenterY
             }
             270 -> {
-                // Image was rotated 270° CW (90° CCW) relative to sensor → undo it
-                nsX = 1.0f - normY
-                nsY = normX
+                nsX = 1.0f - faceCenterY
+                nsY = faceCenterX
             }
             else -> {
-                nsX = normX
-                nsY = normY
+                nsX = faceCenterX
+                nsY = faceCenterY
             }
         }
 
         // Apply a soft noise gate and EMA filter directly to the raw sensor coordinates (nsX, nsY).
         // If the change in face position is very small (less than 0.008 of sensor width/height), 
-        // we scale the EMA alpha towards 0. This completely eliminates ML Kit frame-to-frame noise 
+        // we scale the EMA alpha towards 0. This completely eliminates frame-to-frame noise 
         // and micro-movements, stopping the camera from bouncing/jittering left and right when stationary.
         val posAlpha = if (isInitialEngage) 0.35f else 0.065f
         if (smoothedSensorX < 0.001f && smoothedSensorY < 0.001f) {
@@ -1092,7 +1056,7 @@ class CameraEngine(private val context: Context) {
         // even when moving closer/further or going far behind.
         val targetProportion = 0.58f
         val minZoom = 1.5f
-        val rawFaceHeight = box.height().toFloat() / logicalHeight
+        val rawFaceHeight = bounds.height()
         val emaAlpha = if (isInitialEngage) 0.4f else 0.1f
         smoothedFaceHeight = if (smoothedFaceHeight < 0.001f) rawFaceHeight
                              else smoothedFaceHeight + emaAlpha * (rawFaceHeight - smoothedFaceHeight)
@@ -1114,7 +1078,7 @@ class CameraEngine(private val context: Context) {
 
         targetCenterX = targetXBeforeCoerce.coerceIn(full.left + halfCropW, full.right - halfCropW)
         targetCenterY = targetYBeforeCoerce.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
-        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera rot=$rotation nsX=$nsX nsY=$nsY smX=$smoothedSensorX smY=$smoothedSensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom rawFH=$rawFaceHeight smoothFH=$smoothedFaceHeight rawTZ=$rawTargetZoom initEngage=$isInitialEngage")
+        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera nsX=$nsX nsY=$nsY smX=$smoothedSensorX smY=$smoothedSensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom rawFH=$rawFaceHeight smoothFH=$smoothedFaceHeight rawTZ=$rawTargetZoom initEngage=$isInitialEngage")
     }
 
     private fun tickFaceTracking() {

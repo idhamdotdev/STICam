@@ -2,7 +2,7 @@
 ; App Information
 AppId={{C6B5F4A0-C14B-4E90-B8E5-3A4E839B7A33}
 AppName=STICam Host
-AppVersion=1.1.0
+AppVersion=1.5.0
 AppPublisher=idham.dev
 AppPublisherURL=https://idham.dev
 AppSupportURL=https://idham.dev

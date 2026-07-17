@@ -23,6 +23,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 // ── UI State ──────────────────────────────────────────────────────────────────
 
@@ -64,7 +67,7 @@ data class SticamUiState(
     // Filter state
     val activeArFilter: String        = "None",
     val activeLutFilter: String       = "None",
-    val arFaceData: com.sticam.engine.ArFaceData? = null,
+    val arFaceData: com.sticam.engine.ArFaceMeshData? = null,
     
     // Rotated dimensions
     val outW: Int                     = 1920,
@@ -74,6 +77,7 @@ data class SticamUiState(
     val sensorOrientation: Int        = 90,
     val isFrontCamera: Boolean        = false,
     val debugInfo: String             = "",
+    val showDebugInfo: Boolean        = false,
 
 
 
@@ -130,6 +134,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     // ── Engines ───────────────────────────────────────────────────────────────
 
     internal val engine        = CameraEngine(app)
+    private val cameraLock     = Mutex()
     private var server:         StreamServer?    = null
     private var recording:      RecordingSession? = null
 
@@ -212,18 +217,29 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         
         // Restart the camera engine with the new camera ID if currently streaming
         if (_ui.value.isStreaming) {
-            engine.stop(keepThreads = true)
-            // Wait briefly for camera hardware state cleanup
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                engine.start(
-                    previewSurface = engine.activePreviewSurface,
-                    cameraId       = id,
-                    width          = _ui.value.preset.width,
-                    height         = _ui.value.preset.height,
-                    fps            = _ui.value.preset.fps,
-                    bitrateMbps    = 8
-                )
-            }, 300)
+            viewModelScope.launch {
+                cameraLock.withLock {
+                    if (!_ui.value.isStreaming) return@withLock
+                    try {
+                        engine.stop(keepThreads = true)
+                        kotlinx.coroutines.delay(500)
+                        if (!_ui.value.isStreaming) return@withLock
+                        @Suppress("MissingPermission")
+                        engine.start(
+                            previewSurface = engine.activePreviewSurface,
+                            cameraId       = id,
+                            width          = _ui.value.preset.width,
+                            height         = _ui.value.preset.height,
+                            fps            = _ui.value.preset.fps,
+                            bitrateMbps    = _ui.value.preset.bitrateMbps
+                        )
+                        reapplyCameraStates()
+                        engine.requestKeyFrame()
+                    } catch (e: Exception) {
+                        _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
+                    }
+                }
+            }
         }
     }
 
@@ -403,26 +419,29 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun restartCameraEngine(surface: Surface) {
-        val state = _ui.value
         viewModelScope.launch {
-            try {
-                engine.stop(keepThreads = true)
-                // Wait briefly for camera hardware state cleanup
-                kotlinx.coroutines.delay(350)
-                @Suppress("MissingPermission")
-                engine.start(
-                    previewSurface = surface,
-                    cameraId       = state.selectedCameraId,
-                    width          = state.preset.width,
-                    height         = state.preset.height,
-                    fps            = state.preset.fps,
-                    bitrateMbps    = state.preset.bitrateMbps,
-                )
-                reapplyCameraStates()
-                // Instantly request keyframe to force SPS/PPS headers
-                engine.requestKeyFrame()
-            } catch (e: Exception) {
-                _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
+            cameraLock.withLock {
+                if (!_ui.value.isStreaming) return@withLock
+                try {
+                    engine.stop(keepThreads = true)
+                    // Wait briefly for camera hardware state cleanup
+                    kotlinx.coroutines.delay(500)
+                    if (!_ui.value.isStreaming) return@withLock
+                    @Suppress("MissingPermission")
+                    engine.start(
+                        previewSurface = surface,
+                        cameraId       = _ui.value.selectedCameraId,
+                        width          = _ui.value.preset.width,
+                        height         = _ui.value.preset.height,
+                        fps            = _ui.value.preset.fps,
+                        bitrateMbps    = _ui.value.preset.bitrateMbps,
+                    )
+                    reapplyCameraStates()
+                    // Instantly request keyframe to force SPS/PPS headers
+                    engine.requestKeyFrame()
+                } catch (e: Exception) {
+                    _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
+                }
             }
         }
     }
@@ -452,89 +471,100 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun startStreaming(previewSurface: Surface?) {
         if (_ui.value.isStreaming) return
-        val state = _ui.value
         viewModelScope.launch {
-            val host = if (state.mode is ConnectionMode.Usb) "127.0.0.1" else state.wifiIp.trim()
-            val srv = StreamServer(host = host, port = 8765, engine = engine)
-            srv.onClientConnected    = {
-                _ui.update { it.copy(clientConnected = true,  statusMessage = "CLIENT_CONNECTED") }
-                viewModelScope.launch {
-                    kotlinx.coroutines.delay(300)
-                    sendMirrorStateToClient()
-                    sendSyncParamsToClient()
-                }
-            }
-            srv.onClientDisconnected = { _ui.update { it.copy(clientConnected = false, statusMessage = "WAITING_CLIENT") } }
-            // Cache SPS/PPS when StreamServer extracts them
-            srv.onConfigData = { sps, pps -> cachedSps = sps; cachedPps = pps }
-            srv.onSignalStrengthChanged = { bars -> _ui.update { it.copy(wifiSignalBars = bars) } }
-            
-            // Wire up incoming UI control events from Windows Client
-            srv.onParamsChangedFromHost = { zoom, faceTracking, iso, brightness, focus, flash, cameraId, resolution, arFilter, lutFilter ->
-                if (zoom != null) setZoom(zoom)
-                if (faceTracking != null) setFaceTracking(faceTracking)
-                if (iso != null) setIso(iso)
-                if (brightness != null) setBrightness(brightness)
-                if (focus != null) setFocusDistance(focus)
-                if (flash != null && flash != _ui.value.isFlashOn) toggleFlash()
-                
-                if (cameraId != null && cameraId != _ui.value.selectedCameraId) {
-                    _ui.value.cameras.find { it.id == cameraId }?.let { cam ->
-                        selectCamera(cam.id)
+            cameraLock.withLock {
+                if (_ui.value.isStreaming) return@withLock
+                val state = _ui.value
+                val host = if (state.mode is ConnectionMode.Usb) "127.0.0.1" else state.wifiIp.trim()
+                val srv = StreamServer(host = host, port = 8765, engine = engine)
+                srv.onClientConnected    = {
+                    _ui.update { it.copy(clientConnected = true,  statusMessage = "CLIENT_CONNECTED") }
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(300)
+                        sendMirrorStateToClient()
+                        sendSyncParamsToClient()
                     }
-                } else if (resolution != null) {
-                    val currentResString = "${_ui.value.preset.width}x${_ui.value.preset.height}"
-                    if (resolution != currentResString) {
-                        _ui.value.availableResolutions.find { "${it.width}x${it.height}" == resolution }?.let { res ->
-                            selectPreset(res)
+                }
+                srv.onClientDisconnected = { _ui.update { it.copy(clientConnected = false, statusMessage = "WAITING_CLIENT") } }
+                // Cache SPS/PPS when StreamServer extracts them
+                srv.onConfigData = { sps, pps -> cachedSps = sps; cachedPps = pps }
+                srv.onSignalStrengthChanged = { bars -> _ui.update { it.copy(wifiSignalBars = bars) } }
+                
+                // Wire up incoming UI control events from Windows Client
+                srv.onParamsChangedFromHost = { zoom, faceTracking, iso, brightness, focus, flash, cameraId, resolution, arFilter, lutFilter ->
+                    if (zoom != null) setZoom(zoom)
+                    if (faceTracking != null) setFaceTracking(faceTracking)
+                    if (iso != null) setIso(iso)
+                    if (brightness != null) setBrightness(brightness)
+                    if (focus != null) setFocusDistance(focus)
+                    if (flash != null && flash != _ui.value.isFlashOn) toggleFlash()
+                    
+                    if (cameraId != null && cameraId != _ui.value.selectedCameraId) {
+                        _ui.value.cameras.find { it.id == cameraId }?.let { cam ->
+                            selectCamera(cam.id)
+                        }
+                    } else if (resolution != null) {
+                        val currentResString = "${_ui.value.preset.width}x${_ui.value.preset.height}"
+                        if (resolution != currentResString) {
+                            _ui.value.availableResolutions.find { "${it.width}x${it.height}" == resolution }?.let { res ->
+                                selectPreset(res)
+                            }
                         }
                     }
+                    
+                    if (arFilter != null) setArFilter(arFilter)
+                    if (lutFilter != null) setLutFilter(lutFilter)
                 }
                 
-                if (arFilter != null) setArFilter(arFilter)
-                if (lutFilter != null) setLutFilter(lutFilter)
-            }
-            
-            srv.start()
-            server = srv
+                srv.start()
+                server = srv
 
-            // Auto-stop if no client connects within 30 seconds
-            viewModelScope.launch {
-                kotlinx.coroutines.delay(30000)
-                if (server == srv && !_ui.value.clientConnected) {
-                    Log.i("SticamViewModel", "Connection timeout (30s) reached. Stopping stream.")
-                    stopStreaming()
-                    _ui.update { it.copy(statusMessage = "ERR: Timeout (No PC)") }
+                // Auto-stop if no client connects within 30 seconds
+                viewModelScope.launch {
+                    kotlinx.coroutines.delay(30000)
+                    if (server == srv && !_ui.value.clientConnected) {
+                        Log.i("SticamViewModel", "Connection timeout (30s) reached. Stopping stream.")
+                        stopStreaming()
+                        _ui.update { it.copy(statusMessage = "ERR: Timeout (No PC)") }
+                    }
                 }
-            }
 
-            try {
-                @Suppress("MissingPermission")
-                engine.start(
-                    previewSurface = previewSurface,
-                    cameraId       = state.selectedCameraId,
-                    width          = state.preset.width,
-                    height         = state.preset.height,
-                    fps            = state.preset.fps,
-                    bitrateMbps    = state.preset.bitrateMbps,
-                )
-                reapplyCameraStates()
-                _ui.update { it.copy(isStreaming = true, statusMessage = "WAITING_CLIENT") }
-                // Hold camera access while the app is backgrounded
-                StreamingService.start(getApplication())
-            } catch (e: Exception) {
-                _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
-                srv.stop(); server = null
+                try {
+                    @Suppress("MissingPermission")
+                    engine.start(
+                        previewSurface = previewSurface,
+                        cameraId       = state.selectedCameraId,
+                        width          = state.preset.width,
+                        height         = state.preset.height,
+                        fps            = state.preset.fps,
+                        bitrateMbps    = state.preset.bitrateMbps,
+                    )
+                    reapplyCameraStates()
+                    _ui.update { it.copy(isStreaming = true, statusMessage = "WAITING_CLIENT") }
+                    // Hold camera access while the app is backgrounded
+                    StreamingService.start(getApplication())
+                } catch (e: Exception) {
+                    _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
+                    srv.stop(); server = null
+                }
             }
         }
     }
 
     fun stopStreaming() {
-        stopRecording()
-        engine.stop()
-        server?.stop(); server = null
+        // Stop the foreground service synchronously — the coroutine below is
+        // cancelled with viewModelScope when the app is closing, and the
+        // notification must never outlive the stream.
         StreamingService.stop(getApplication())
-        _ui.update { it.copy(isStreaming = false, clientConnected = false, statusMessage = "STANDBY") }
+        viewModelScope.launch {
+            cameraLock.withLock {
+                if (!_ui.value.isStreaming) return@withLock
+                stopRecording()
+                engine.stop()
+                server?.stop(); server = null
+                _ui.update { it.copy(isStreaming = false, clientConnected = false, statusMessage = "STANDBY") }
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -674,6 +704,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     // ─────────────────────────────────────────────────────────────────────────
 
     fun selectUsb()               = _ui.update { it.copy(mode = ConnectionMode.Usb) }
+    fun toggleDebugInfo()         = _ui.update { it.copy(showDebugInfo = !it.showDebugInfo) }
     fun selectWifi(ip: String)    = _ui.update { it.copy(mode = ConnectionMode.WiFi(ip), wifiIp = ip) }
     fun setShowIpDialog(v: Boolean) = _ui.update { it.copy(showIpDialog = v) }
     fun toggleControlPanel()      = _ui.update { it.copy(controlPanelExpanded = !it.controlPanelExpanded) }
@@ -706,5 +737,15 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(isScreenOffMode = enabled) }
     }
 
-    override fun onCleared() { stopStreaming(); super.onCleared() }
+    override fun onCleared() {
+        runBlocking {
+            cameraLock.withLock {
+                stopRecording()
+                engine.stop()
+                server?.stop()
+                server = null
+            }
+        }
+        super.onCleared()
+    }
 }

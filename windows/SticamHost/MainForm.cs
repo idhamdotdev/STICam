@@ -68,6 +68,9 @@ namespace SticamHost
         private readonly ComboBox     _cbCamera;
         private readonly Label        _lblResolutionTitle;
         private readonly ComboBox     _cbResolution;
+        private readonly Label        _lblArFilterTitle;
+        private readonly FlowLayoutPanel _flowArFilters;
+        private string _activeArFilter = "None";
 
         // hidden idle controls kept for logic compatibility
         private readonly CheckBox     _chkVirtualCam;
@@ -89,6 +92,7 @@ namespace SticamHost
         private VirtualCameraManager?  _vcam;
         private readonly System.Windows.Forms.Timer _statsTimer;
         private bool _vcamActive;
+        private bool _isLive;
         private bool _mirrorVideo;
         private bool _faceTrackingActive;
         private bool _cinemaMode;
@@ -340,7 +344,8 @@ namespace SticamHost
                 Dock      = DockStyle.Right,
                 Width     = 220,
                 BackColor = NavyDark,
-                Visible   = false
+                Visible   = false,
+                AutoScroll = true
             };
             _panelControls.Paint += (s, e) =>
             {
@@ -611,7 +616,40 @@ namespace SticamHost
                 }
             };
             _panelControls.Controls.Add(_cbResolution);
-            
+
+            yOffset += 38;
+            _lblArFilterTitle = new Label
+            {
+                Text = "AR FILTER",
+                Font = MakeFont(10f),
+                ForeColor = TextDim,
+                Location = new Point(12, yOffset),
+                AutoSize = true,
+                BackColor = Color.Transparent
+            };
+            _panelControls.Controls.Add(_lblArFilterTitle);
+
+            yOffset += 20;
+            _flowArFilters = new FlowLayoutPanel
+            {
+                Location = new Point(8, yOffset),
+                Width = 204,
+                Height = 180,
+                BackColor = Color.Transparent,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                AutoScroll = false
+            };
+
+            string[] filtersList = new string[] { "None", "Crown", "England", "Smooth", "Slim Face", "TigerPaint", "Skull", "Ironman", "Big Eyes" };
+            foreach (var fName in filtersList)
+            {
+                var btn = MakeFilterButton(fName);
+                _flowArFilters.Controls.Add(btn);
+            }
+            _panelControls.Controls.Add(_flowArFilters);
+            UpdateFilterUiSelection("None");
+            yOffset += 184;
 
 
             _liveContainer.Controls.Add(_panelControls);
@@ -654,6 +692,15 @@ namespace SticamHost
             this.PerformLayout();
         }
 
+        protected override void OnShown(EventArgs e)
+        {
+            base.OnShown(e);
+            if (_chkAutoConnect.Checked)
+            {
+                OnConnect(null, EventArgs.Empty);
+            }
+        }
+
         // ── Font helpers ─────────────────────────────────────────────────────
 
         private void LoadLalezarFont()
@@ -677,6 +724,53 @@ namespace SticamHost
             if (_lalezar != null && _lalezar.IsStyleAvailable(FontStyle.Regular))
                 return new Font(_lalezar, size, FontStyle.Regular);
             return new Font("Segoe UI", size, style);
+        }
+
+        private Button MakeFilterButton(string filterName)
+        {
+            var btn = new Button
+            {
+                Text = filterName.ToUpper(),
+                Width = 94,
+                Height = 32,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = TextWhite,
+                BackColor = NavyMid,
+                Font = MakeFont(7.5f, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                Margin = new Padding(2),
+            };
+            btn.FlatAppearance.BorderSize = 1;
+            btn.FlatAppearance.BorderColor = Color.FromArgb(40, 80, 120);
+            btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, 60, 90);
+            btn.Tag = filterName;
+            btn.Click += (s, e) => {
+                if (_isSyncing) return;
+                SelectFilter(filterName);
+            };
+            return btn;
+        }
+
+        private void SelectFilter(string filterName)
+        {
+            UpdateFilterUiSelection(filterName);
+            _receiver?.SendCameraControl(iso: null, brightness: null, focus: null, arFilter: filterName);
+        }
+
+        private void UpdateFilterUiSelection(string filterName)
+        {
+            _activeArFilter = filterName;
+            if (_flowArFilters == null) return;
+            foreach (Control ctrl in _flowArFilters.Controls)
+            {
+                if (ctrl is Button btn)
+                {
+                    bool isSelected = btn.Tag?.ToString() == filterName;
+                    btn.BackColor = isSelected ? TealAccent : NavyMid;
+                    btn.ForeColor = isSelected ? NavyDark : TextWhite;
+                    btn.FlatAppearance.BorderColor = isSelected ? TealAccent : Color.FromArgb(40, 80, 120);
+                }
+            }
         }
 
         // ── Custom radio button ──────────────────────────────────────────────
@@ -755,6 +849,7 @@ namespace SticamHost
 
         private void ShowLiveMode(string deviceLabel)
         {
+            _isLive = true;
             _lblDeviceName.Text = deviceLabel;
             _idleContainer.Visible = false;
             _liveContainer.Visible = true;
@@ -787,7 +882,14 @@ namespace SticamHost
 
         private void ShowIdleMode()
         {
+            _isLive = false;
             HideMenuPopup();
+            _cinemaMode = false;
+            _btnMenu.Visible = true;
+            _lblDeviceName.Visible = true;
+            _lblWatermark.Visible  = true;
+            _lblLiveStats.Visible  = true;
+
             if (_panelControls != null) _panelControls.Visible = false;
             _liveContainer.Visible = false;
             _idleContainer.Visible = true;
@@ -796,10 +898,12 @@ namespace SticamHost
             if (_chkFlash != null) _chkFlash.Checked = false;
             if (_cbCamera != null) _cbCamera.Items.Clear();
             if (_cbResolution != null) _cbResolution.Items.Clear();
+            
+            float scale = (float)this.DeviceDpi / 96f;
+            this.WindowState = FormWindowState.Normal;
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
-
-            float scale = (float)this.DeviceDpi / 96f;
+            this.MinimumSize = new Size((int)(540 * scale), (int)(480 * scale));
             Size = new Size((int)(720 * scale), (int)(580 * scale));
             UpdateTrayMenuItems();
         }
@@ -1021,6 +1125,13 @@ namespace SticamHost
                                 {
                                     _cbResolution.SelectedIndex = selectedIndex;
                                 }
+                            }
+
+                            // AR Filter sync
+                            if (root.TryGetProperty("ar_filter", out var arFilterProp))
+                            {
+                                string arFilter = arFilterProp.GetString() ?? "None";
+                                UpdateFilterUiSelection(arFilter);
                             }
 
                             if (root.TryGetProperty("orientation", out var oriProp))
@@ -1409,7 +1520,10 @@ namespace SticamHost
 
         private void UpdateTrayMenuItems()
         {
-            bool online = _liveContainer.Visible;
+            // Use the tracked state, NOT _liveContainer.Visible — a WinForms
+            // control reports Visible=false while the form is hidden in the
+            // tray, which made the tooltip claim "Offline" mid-stream.
+            bool online = _isLive;
             UpdateTrayIcon(online);
 
             if (_receiver == null)

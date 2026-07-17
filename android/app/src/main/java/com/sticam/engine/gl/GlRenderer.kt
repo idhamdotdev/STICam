@@ -1,5 +1,7 @@
 package com.sticam.engine.gl
 
+import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.SurfaceTexture
 import android.opengl.GLES11Ext
 import android.opengl.GLES30
@@ -8,9 +10,11 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.view.Surface
 import android.util.Log
-import com.sticam.engine.ArFaceData
+import android.graphics.PointF
+import com.sticam.engine.ArFaceMeshData
 
 class GlRenderer(
+    private val context: Context,
     private val previewSurface: Surface,
     private val encoderSurface: Surface,
     private val cameraWidth: Int,
@@ -19,9 +23,17 @@ class GlRenderer(
     private val outH: Int,
     initialRotationDegrees: Int = 0,
     private val isFrontCamera: Boolean = false,
+    private val sensorOrientation: Int = 90,
     private val onInputSurfaceReady: (Surface) -> Unit
 ) {
     @Volatile var rotationDegrees = initialRotationDegrees
+    @Volatile var outputRotation: Int = 0
+    private val baseRotation: Int
+        get() = if (isFrontCamera) {
+            (360 - sensorOrientation + 180) % 360
+        } else {
+            (360 - sensorOrientation) % 360
+        }
     private var handlerThread = HandlerThread("GlRendererThread")
     private var handler: Handler
     
@@ -46,19 +58,117 @@ class GlRenderer(
     private var arPositionHandle = -1
     private var arTextureCoordHandle = -1
     private var sArTextureHandle = -1
+
+    // Morph and beauty shader uniform locations
+    private var uMorphTypeHandle = -1
+    private var uLeftEyeHandle = -1
+    private var uRightEyeHandle = -1
+    private var uFaceCenterHandle = -1
+    private var uBeautyLevelHandle = -1
+    private var uTexelWidthHandle = -1
+    private var uTexelHeightHandle = -1
     
     private val transformMatrix = FloatArray(16)
     
     private var activeArFilter: String = "None"
-    @Volatile private var currentArFaceData: ArFaceData? = null
+    @Volatile private var currentArFaceData: ArFaceMeshData? = null
+    
+    // Face mesh renderer for advanced AR (face paint, masks)
+    private var faceMeshRenderer: FaceMeshRenderer? = null
+    private var activeMeshFilter: String = "None"
     
     private val FRAGMENT_SHADER = """
         #extension GL_OES_EGL_image_external : require
         precision mediump float;
         varying vec2 vTextureCoord;
         uniform samplerExternalOES sTexture;
+        
+        // Morph controls
+        uniform int uMorphType; // 0 = None, 1 = Big Eyes, 2 = Slim Face
+        uniform vec2 uLeftEye;   // normalized left eye center
+        uniform vec2 uRightEye;  // normalized right eye center
+        uniform vec2 uFaceCenter;// normalized face center
+        
+        // Beauty controls
+        uniform float uBeautyLevel; // 0.0 to 1.0
+        uniform float uTexelWidth;  // 1.0 / outW
+        uniform float uTexelHeight; // 1.0 / outH
+
+        // Helper for Big Eyes (bulge)
+        vec2 bulge(vec2 uv, vec2 center, float radius, float strength) {
+            vec2 d = uv - center;
+            float dist = length(d);
+            if (dist < radius) {
+                float percent = dist / radius;
+                float scale = 1.0 - strength * (1.0 - percent * percent);
+                return center + d * scale;
+            }
+            return uv;
+        }
+
+        // Helper for Slim Face (squeeze)
+        vec2 slim(vec2 uv, vec2 center, float radius, float strength) {
+            vec2 d = uv - center;
+            float dist = length(d);
+            if (dist < radius) {
+                float percent = dist / radius;
+                if (d.y > -0.05) {
+                    float factor = strength * (1.0 - percent * percent);
+                    vec2 res = uv;
+                    res.x = center.x + d.x * (1.0 + factor);
+                    return res;
+                }
+            }
+            return uv;
+        }
+
         void main() {
-            gl_FragColor = texture2D(sTexture, vTextureCoord);
+            vec2 uv = vTextureCoord;
+            
+            // 1. Apply Morphs
+            if (uMorphType == 1) { // Big Eyes
+                uv = bulge(uv, uLeftEye, 0.08, 0.25);
+                uv = bulge(uv, uRightEye, 0.08, 0.25);
+            } else if (uMorphType == 2) { // Slim Face
+                uv = slim(uv, uFaceCenter, 0.25, 0.18);
+            }
+            
+            // 2. Apply Beauty (Skin Smoothing)
+            if (uBeautyLevel > 0.0) {
+                vec4 color = texture2D(sTexture, uv);
+                vec3 sum = color.rgb;
+                float totalWeight = 1.0;
+                
+                // 8-sample bilateral approximation
+                float stepX = uTexelWidth * (1.0 + uBeautyLevel * 1.5);
+                float stepY = uTexelHeight * (1.0 + uBeautyLevel * 1.5);
+                
+                vec2 offsets[8];
+                offsets[0] = vec2(-stepX, 0.0);
+                offsets[1] = vec2(stepX, 0.0);
+                offsets[2] = vec2(0.0, -stepY);
+                offsets[3] = vec2(0.0, stepY);
+                offsets[4] = vec2(-stepX * 0.7, -stepY * 0.7);
+                offsets[5] = vec2(stepX * 0.7, -stepY * 0.7);
+                offsets[6] = vec2(-stepX * 0.7, stepY * 0.7);
+                offsets[7] = vec2(stepX * 0.7, stepY * 0.7);
+                
+                float th = 0.12 + (1.0 - uBeautyLevel) * 0.08;
+                
+                for (int i = 0; i < 8; i++) {
+                    vec2 sampleUv = uv + offsets[i];
+                    vec3 c = texture2D(sTexture, sampleUv).rgb;
+                    float diff = distance(c, color.rgb);
+                    if (diff < th) {
+                        float w = 1.0 - (diff / th);
+                        sum += c * w;
+                        totalWeight += w;
+                    }
+                }
+                gl_FragColor = vec4(sum / totalWeight, color.a);
+            } else {
+                gl_FragColor = texture2D(sTexture, uv);
+            }
         }
     """.trimIndent()
 
@@ -149,10 +259,21 @@ class GlRenderer(
         sTextureHandle = GLES30.glGetUniformLocation(program, "sTexture")
         sLutHandle = GLES30.glGetUniformLocation(program, "sLut")
 
+        uMorphTypeHandle = GLES30.glGetUniformLocation(program, "uMorphType")
+        uLeftEyeHandle = GLES30.glGetUniformLocation(program, "uLeftEye")
+        uRightEyeHandle = GLES30.glGetUniformLocation(program, "uRightEye")
+        uFaceCenterHandle = GLES30.glGetUniformLocation(program, "uFaceCenter")
+        uBeautyLevelHandle = GLES30.glGetUniformLocation(program, "uBeautyLevel")
+        uTexelWidthHandle = GLES30.glGetUniformLocation(program, "uTexelWidth")
+        uTexelHeightHandle = GLES30.glGetUniformLocation(program, "uTexelHeight")
+
         arProgram = createProgram(AR_VERTEX_SHADER, AR_FRAGMENT_SHADER)
         arPositionHandle = GLES30.glGetAttribLocation(arProgram, "aPosition")
         arTextureCoordHandle = GLES30.glGetAttribLocation(arProgram, "aTextureCoord")
         sArTextureHandle = GLES30.glGetUniformLocation(arProgram, "sTexture")
+
+        // Initialize face mesh renderer for advanced AR
+        faceMeshRenderer = FaceMeshRenderer().also { it.init() }
         
         val textures = IntArray(3)
         GLES30.glGenTextures(3, textures, 0)
@@ -224,7 +345,7 @@ class GlRenderer(
         }
     }
 
-    fun setArFaceData(data: ArFaceData?) {
+    fun setArFaceData(data: ArFaceMeshData?) {
         currentArFaceData = data
     }
     
@@ -236,11 +357,12 @@ class GlRenderer(
         st.getTransformMatrix(transformMatrix)
         val timestamp = st.timestamp
         
-        // Draw to preview — no GL rotation; TextureView matrix handles phone display
+        // Draw to preview — apply baseRotation to render upright on phone screen preview surface
         eglPreviewSurface?.let {
             egl.makeCurrent(it)
-            drawTexture(0)
+            drawTexture(baseRotation)
             drawArTexture()
+            drawFaceMesh()
             egl.swapBuffers(it)
         }
         
@@ -249,6 +371,7 @@ class GlRenderer(
             egl.makeCurrent(it)
             drawTexture(rotationDegrees)
             drawArTexture()
+            drawFaceMesh()
             egl.setPresentationTime(it, timestamp)
             egl.swapBuffers(it)
         }
@@ -259,7 +382,7 @@ class GlRenderer(
         // is still landscape, so always use the full viewport (no pillarboxing).
         // For back camera a 90/270 rotation means the user chose a portrait stream,
         // so pillarbox it inside the landscape encoder buffer.
-        if (!isFrontCamera && (rotation == 90 || rotation == 270)) {
+        if (!isFrontCamera && (outputRotation == 90 || outputRotation == 270)) {
             val w = (outH * outH) / outW
             val x = (outW - w) / 2
             GLES30.glViewport(x, 0, w, outH)
@@ -294,6 +417,54 @@ class GlRenderer(
         }
         GLES30.glUniformMatrix4fv(uSTMatrixHandle, 1, false, texMatrix, 0)
         
+        // Set morph and beauty uniforms
+        val face = currentArFaceData
+        var morphType = 0
+        var leftEyeX = 0f; var leftEyeY = 0f
+        var rightEyeX = 0f; var rightEyeY = 0f
+        var faceCenterX = 0f; var faceCenterY = 0f
+        var beautyLevel = 0f
+
+        if (activeArFilter == "Big Eyes") {
+            morphType = 1
+        } else if (activeArFilter == "Slim Face") {
+            morphType = 2
+        } else if (activeArFilter == "Smooth") {
+            beautyLevel = 0.85f
+        }
+
+        if (face != null) {
+            val le = face.leftEye
+            val re = face.rightEye
+            val nose = face.noseBase
+            if (le != null) {
+                val tLe = transformPoint(le, texMatrix)
+                leftEyeX = tLe.x
+                leftEyeY = tLe.y
+            }
+            if (re != null) {
+                val tRe = transformPoint(re, texMatrix)
+                rightEyeX = tRe.x
+                rightEyeY = tRe.y
+            }
+            if (nose != null) {
+                val tNose = transformPoint(nose, texMatrix)
+                faceCenterX = tNose.x
+                faceCenterY = tNose.y
+            } else {
+                faceCenterX = (leftEyeX + rightEyeX) / 2f
+                faceCenterY = (leftEyeY + rightEyeY) / 2f
+            }
+        }
+
+        GLES30.glUniform1i(uMorphTypeHandle, morphType)
+        GLES30.glUniform2f(uLeftEyeHandle, leftEyeX, leftEyeY)
+        GLES30.glUniform2f(uRightEyeHandle, rightEyeX, rightEyeY)
+        GLES30.glUniform2f(uFaceCenterHandle, faceCenterX, faceCenterY)
+        GLES30.glUniform1f(uBeautyLevelHandle, beautyLevel)
+        GLES30.glUniform1f(uTexelWidthHandle, 1.0f / outW.toFloat())
+        GLES30.glUniform1f(uTexelHeightHandle, 1.0f / outH.toFloat())
+        
         GLES30.glDrawArrays(GLES30.GL_TRIANGLE_STRIP, 0, 4)
         
         GLES30.glDisableVertexAttribArray(aPositionHandle)
@@ -302,9 +473,18 @@ class GlRenderer(
         GLES30.glUseProgram(0)
     }
 
+    private fun transformPoint(p: android.graphics.PointF, matrix: FloatArray): android.graphics.PointF {
+        val x = p.x
+        val y = p.y
+        // standard homogeneous 2D matrix transformation on texture coords
+        val tx = matrix[0] * x + matrix[4] * y + matrix[12]
+        val ty = matrix[1] * x + matrix[5] * y + matrix[13]
+        return android.graphics.PointF(tx, ty)
+    }
+
     private fun drawArTexture() {
         val faceData = currentArFaceData ?: return
-        if (activeArFilter == "None") return
+        if (activeArFilter != "Crown" && activeArFilter != "England") return
 
         GLES30.glEnable(GLES30.GL_BLEND)
         GLES30.glBlendFunc(GLES30.GL_SRC_ALPHA, GLES30.GL_ONE_MINUS_SRC_ALPHA)
@@ -325,11 +505,19 @@ class GlRenderer(
         var angle = 0.0
         val leftEye = faceData.leftEye
         val rightEye = faceData.rightEye
-
         if (leftEye != null && rightEye != null) {
+            // Sort eyes by screen X coordinate to ensure screen-left and screen-right eyes are consistent.
+            // This prevents 180-degree flips in the tilt angle when the image is mirrored.
+            val (screenLeftEye, screenRightEye) = if (leftEye.x < rightEye.x) {
+                leftEye to rightEye
+            } else {
+                rightEye to leftEye
+            }
+
             // Scale X to match Y for accurate physical angle and distance math
-            val eyeDistX = (leftEye.x - rightEye.x) * aspect
-            val eyeDistY = leftEye.y - rightEye.y
+            val eyeDistX = (screenRightEye.x - screenLeftEye.x) * aspect
+            val eyeDistY = screenRightEye.y - screenLeftEye.y
+            Log.i("SticamAR", "leftEye: $leftEye, rightEye: $rightEye, screenLeft: $screenLeftEye, screenRight: $screenRightEye, aspect: $aspect, eyeDistX: $eyeDistX, eyeDistY: $eyeDistY")
             val eyeDist = Math.sqrt((eyeDistX * eyeDistX + eyeDistY * eyeDistY).toDouble()).toFloat()
             
             val midX = (leftEye.x + rightEye.x) / 2f
@@ -341,12 +529,18 @@ class GlRenderer(
 
             // Base width scaler. eyeDist is in Y-space, so divide by aspect to get X-space width
             val baseHw = eyeDist / aspect
+            Log.i("SticamAR", "angle: $angle, cosA: $cosA, sinA: $sinA, baseHw: $baseHw")
 
             if (activeArFilter == "Crown") {
                 hw = baseHw * 1.3f
                 val offset = eyeDist * 1.6f // Physically accurate forehead height
                 // Move UP (negative Y) along the rotated axis
                 // X movement needs to be converted back to X-scale (/ aspect)
+                cx = midX + sinA * offset / aspect
+                cy = midY - cosA * offset
+            } else if (activeArFilter == "England") {
+                hw = baseHw * 1.0f
+                val offset = eyeDist * 2.1f
                 cx = midX + sinA * offset / aspect
                 cy = midY - cosA * offset
             } else if (activeArFilter == "Dog" || activeArFilter == "Cat") {
@@ -360,21 +554,26 @@ class GlRenderer(
                 cy = midY
             } else if (activeArFilter == "Beard") {
                 hw = baseHw * 1.2f
-                if (faceData.mouthBottom != null) {
+                val mouth = faceData.mouthBottom
+                if (mouth != null) {
                     val offset = eyeDist * 0.3f
-                    cx = faceData.mouthBottom.x + sinA * offset / aspect
-                    cy = faceData.mouthBottom.y - cosA * offset
+                    cx = mouth.x + sinA * offset / aspect
+                    cy = mouth.y + cosA * offset
                 } else {
                     val offset = eyeDist * 1.5f
                     cx = midX - sinA * offset / aspect
                     cy = midY + cosA * offset
                 }
             }
+            Log.i("SticamAR", "cx: $cx, cy: $cy, hw: $hw, filter: $activeArFilter")
         } else {
             // Fallback to bounding box logic
             if (activeArFilter == "Crown") {
                 hw = faceW * 0.4f
                 cy = bounds.top - (hw * aspect * 0.5f)
+            } else if (activeArFilter == "England") {
+                hw = faceW * 0.35f
+                cy = bounds.top - (hw * aspect * 0.8f)
             } else if (activeArFilter == "Dog" || activeArFilter == "Cat") {
                 hw = faceW * 0.6f
                 cy = bounds.top + (faceW * 0.2f)
@@ -442,8 +641,52 @@ class GlRenderer(
         GLES30.glDisable(GLES30.GL_BLEND)
     }
     
+    /**
+     * Load a face mesh texture filter from assets.
+     * @param filterName Name of the mesh filter (e.g. "TigerPaint", "SkullMask")
+     * @param assetPath Path to the PNG texture in assets (e.g. "filters/tiger_paint.png")
+     */
+    fun setMeshFilter(filterName: String, assetPath: String?) {
+        handler.post {
+            activeMeshFilter = filterName
+            if (assetPath != null) {
+                try {
+                    val bitmap = context.assets.open(assetPath).use { BitmapFactory.decodeStream(it) }
+                    if (bitmap != null) {
+                        faceMeshRenderer?.loadTexture(bitmap)
+                        bitmap.recycle()
+                        Log.i("GlRenderer", "Loaded mesh filter: $filterName from $assetPath")
+                    }
+                } catch (e: Exception) {
+                    Log.e("GlRenderer", "Failed to load mesh filter: $filterName", e)
+                    activeMeshFilter = "None"
+                }
+            } else {
+                activeMeshFilter = "None"
+            }
+        }
+    }
+
+    /**
+     * Load a face mesh texture from a Bitmap directly.
+     */
+    fun setMeshFilterBitmap(filterName: String, bitmap: android.graphics.Bitmap) {
+        handler.post {
+            activeMeshFilter = filterName
+            faceMeshRenderer?.loadTexture(bitmap)
+            Log.i("GlRenderer", "Loaded mesh filter bitmap: $filterName")
+        }
+    }
+
+    private fun drawFaceMesh() {
+        if (activeMeshFilter == "None") return
+        val faceData = currentArFaceData ?: return
+        faceMeshRenderer?.draw(faceData, opacity = 0.85f, isFrontCamera = isFrontCamera)
+    }
+
     fun release() {
         handler.post {
+            faceMeshRenderer?.release()
             inputSurface?.release()
             surfaceTexture?.release()
             eglPreviewSurface?.let { eglManager?.releaseSurface(it) }
