@@ -150,6 +150,12 @@ class CameraEngine(private val context: Context) {
     private var consecutiveFaceFrames = 0
     private var isInitialEngage = false
 
+    // Talking-head framing: the auto-zoom punch-in stays inside this subtle
+    // range — engages at ≥1.5x, never exceeds 2x — so the crop always reads
+    // as a natural webcam composition instead of a full close-up.
+    private val trackMinZoom = 1.5f
+    private val trackMaxZoom = 2.0f
+
     // Velocity accumulators for momentum-based smoothing (talking head dampening)
     private var velX = 0f
     private var velY = 0f
@@ -1052,19 +1058,21 @@ class CameraEngine(private val context: Context) {
         val targetXBeforeCoerce = currentLeft + smoothedSensorX * cropW
         val targetYBeforeCoerce = currentTop + smoothedSensorY * cropH
 
-        // Auto-zoom: Frame the face to maintain the close-up size requested by the user (~58% of frame height)
-        // even when moving closer/further or going far behind.
+        // Auto-zoom: hold the face near ~58% of frame height, but clamp the
+        // punch-in to the talking-head band [trackMinZoom, trackMaxZoom] —
+        // leaning closer eases toward 1.5x, leaning back eases toward 2x,
+        // and the crop never jumps to a full close-up.
         val targetProportion = 0.58f
-        val minZoom = 1.5f
+        val zoomCap = trackMaxZoom.coerceAtMost(maxZoom).coerceAtLeast(trackMinZoom)
         val rawFaceHeight = bounds.height()
         val emaAlpha = if (isInitialEngage) 0.4f else 0.1f
         smoothedFaceHeight = if (smoothedFaceHeight < 0.001f) rawFaceHeight
                              else smoothedFaceHeight + emaAlpha * (rawFaceHeight - smoothedFaceHeight)
 
         val rawTargetZoom = if (smoothedFaceHeight > 0.005f) {
-            (targetProportion / smoothedFaceHeight).coerceIn(minZoom, maxZoom)
+            (targetProportion / smoothedFaceHeight).coerceIn(trackMinZoom, zoomCap)
         } else {
-            currentCropZoom.coerceAtLeast(minZoom)
+            currentCropZoom.coerceIn(trackMinZoom, zoomCap)
         }
         // Direct assignment to allow responsive zoom target updates. 
         // The smoothing is handled beautifully at 30 FPS by alphaZoom in tickFaceTracking().
@@ -1097,8 +1105,11 @@ class CameraEngine(private val context: Context) {
         // exponential moving average (EMA) filter. This creates an extremely smooth ease-out 
         // that comes to a complete, instant stop once the target face stops moving.
         //
-        val alphaPan = if (isInitialEngage) 0.25f else 0.05f
-        val alphaZoom = if (isInitialEngage) 0.20f else 0.04f
+        // Engage ramps gently: the zoom glides 1x → ~1.7x over roughly 1.5s
+        // instead of snapping, so turning tracking on feels like a camera
+        // operator easing in rather than a cut.
+        val alphaPan = if (isInitialEngage) 0.15f else 0.05f
+        val alphaZoom = if (isInitialEngage) 0.06f else 0.04f
 
         val distToTargetX = Math.abs(currentCropCenter.x - targetCenterX)
         val distToTargetY = Math.abs(currentCropCenter.y - targetCenterY)
