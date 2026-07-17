@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Text;
 using System.IO;
@@ -1448,6 +1449,9 @@ namespace SticamHost
 
         public event EventHandler? ValueChanged;
 
+        // Runtime-only control (no designer) — hide properties from designer
+        // serialization, required by the WFO1000 analyzer since .NET 9.
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public float Value
         {
             get => _value;
@@ -1462,9 +1466,13 @@ namespace SticamHost
             }
         }
 
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public float Min { get => _min; set { _min = value; Invalidate(); } }
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public float Max { get => _max; set { _max = value; Invalidate(); } }
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public string Label { get => _label; set { _label = value; Invalidate(); } }
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public string ValueText { get => _valStr; set { _valStr = value; Invalidate(); } }
 
         public SticamSlider()
