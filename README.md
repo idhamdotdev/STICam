@@ -58,7 +58,8 @@ Go to the [Releases](https://github.com/idhamdotdev/STICam/releases) page and do
    dotnet restore
    dotnet build -c Release
    ```
-4. The executable will be generated at `windows/SticamHost/bin/Release/net8.0-windows/STICamHost.exe`.
+4. The executable will be generated at `windows/SticamHost/bin/Release/net10.0-windows/STICamHost.exe`.
+5. **Installer** (optional): publish a self-contained build with `dotnet publish -c Release -r win-x64 --self-contained -o publish`, then compile `windows/SticamInstaller.iss` with [Inno Setup 6](https://jrsoftware.org/isinfo.php).
 
 ## License
 
