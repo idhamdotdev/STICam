@@ -3,6 +3,7 @@
 [![GitHub Stars](https://img.shields.io/github/stars/idhamdotdev/STICam?style=for-the-badge&color=2A7AE2&logo=github)](https://github.com/idhamdotdev/STICam/stargazers)
 [![GitHub Followers](https://img.shields.io/github/followers/idhamdotdev?style=for-the-badge&color=2A7AE2&logo=github)](https://github.com/idhamdotdev)
 [![License](https://img.shields.io/github/license/idhamdotdev/STICam?style=for-the-badge&color=2A7AE2)](LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/idhamdotdev/STICam/build.yml?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/idhamdotdev/STICam/actions/workflows/build.yml)
 
 STICam streams low-latency H.264 video from an Android device to a Windows PC over Wi-Fi or USB. The Windows application decodes the stream and registers a virtual webcam, allowing you to use your phone as a high-quality camera in Zoom, Microsoft Teams, Google Meet, and OBS Studio.
 
