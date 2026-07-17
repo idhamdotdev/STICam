@@ -14,6 +14,7 @@ STICam streams low-latency H.264 video from an Android device to a Windows PC ov
 * **Dual Connection Modes**: Wi-Fi (wireless connection) and USB (automated ADB port forwarding configuration).
 * **Local Recording**: Save the stream directly as an MP4 file on the phone's storage with zero quality loss.
 * **Virtual Webcam & RTSP**: Registers a DirectShow camera on Windows or exposes an RTSP stream for OBS Studio and VLC.
+
 ## Installation
 
 ### 1. Download the Files
@@ -64,5 +65,8 @@ This project is licensed under the GNU General Public License v2.0.
 ### Third-Party Software
 * **Android Debug Bridge**: Distributed under the Apache License 2.0.
 * **FFmpeg**: Distributed under the GNU GPL v2.0.
+* **Sdcb.FFmpeg**: .NET FFmpeg bindings distributed under the MIT License.
 * **OBS Virtual Camera**: DirectShow components distributed under the GNU GPL v2.0.
 * **Google ML Kit**: Face detection SDK distributed under Google APIs Terms of Service.
+* **Jetpack Compose, AndroidX & Kotlin Coroutines**: Distributed under the Apache License 2.0.
+* **Lalezar Font**: Typeface by Borna Izadpanah distributed under the SIL Open Font License 1.1.
