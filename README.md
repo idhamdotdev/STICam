@@ -12,7 +12,7 @@ STICam streams low-latency H.264 video from an Android device to a Windows PC ov
 * **Low-Latency Streaming**: Fast, real-time H.264 encoding and streaming using the device's native hardware.
 * **Manual Camera Controls**: Full adjustment of ISO, shutter speed, focus distance, exposure compensation, white balance Kelvin temperature, and flashlight torch from the Windows application.
 * **Face Tracking**: On-device real-time face tracking using MediaPipe Face Landmarker — 468 3D landmarks, completely free and fully offline. It automatically pans and zooms to keep you centered and framed cleanly without jitter or sudden jumps.
-* **Dual Connection Modes**: Wi-Fi (wireless connection) and USB (automated ADB port forwarding configuration).
+* **Dual Connection Modes**: Wi-Fi (wireless connection) and USB (automated ADB port forwarding configuration). If the phone drops or the app restarts, the host keeps the virtual camera alive and reconnects automatically.
 * **Local Recording**: Save the stream directly as an MP4 file on the phone's storage with zero quality loss.
 * **Virtual Webcam & RTSP**: Registers a DirectShow camera on Windows or exposes an RTSP stream for OBS Studio and VLC.
 

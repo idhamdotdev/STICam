@@ -336,11 +336,10 @@ namespace SticamHost
 
             _menuPopup.Controls.Add(_menuMirror);
             _menuPopup.Controls.Add(_menuFaceTracking);
-            _menuPopup.Controls.Add(_menuVcamStatus);
             _menuPopup.Controls.Add(_menuVirtualCam);
             _menuPopup.Controls.Add(_menuDisconnect);
 
-            _menuPopup.Height = 200; // slightly taller to accommodate the bigger buttons
+            _menuPopup.Height = 180;
 
             // ── CAMERA CONTROL SIDE PANEL ─────────────────────────────────────
             _panelControls = new Panel
@@ -1161,17 +1160,28 @@ namespace SticamHost
                     if (IsDisposed) return;
                     if (!ok)
                 {
-                    ShowIdleMode();
-                    _btnConnect.Text = "CONNECT";
-                    _btnConnect.BackColor = TealAccent;
-                    _receiver?.Disconnect(); _receiver = null;
-                    _decoder?.Stop();        _decoder  = null;
-                    _adb?.Stop();            _adb      = null;
+                    // User-initiated disconnects null _receiver before this
+                    // event lands — a live receiver means the phone dropped
+                    // on its own (app closed, USB hiccup, Wi-Fi blip).
+                    if (_receiver == null) return;
+
+                    // Auto-reconnect: the receiver's accept-loop is already
+                    // waiting for the phone (which retries every 2s), and
+                    // VideoDecoder.Start() re-inits itself on the next
+                    // SPS/PPS. Keep the whole pipeline — including the
+                    // virtual camera — alive so the stream resumes by itself.
+                    _lblLiveStats.Text = "RECONNECTING…";
+                    _btnConnect.Text = "WAITING...";
+                    _btnConnect.BackColor = Color.FromArgb(50, 130, 180);
                 }
-                else if (ok && !_liveContainer.Visible)
+                else
                 {
-                    _btnConnect.Text = "CONNECTED";
-                    _btnConnect.BackColor = Color.FromArgb(50, 180, 130);
+                    if (!_liveContainer.Visible)
+                    {
+                        _btnConnect.Text = "CONNECTED";
+                        _btnConnect.BackColor = Color.FromArgb(50, 180, 130);
+                    }
+                    _lblLiveStats.Text = "";
                 }
                 UpdateTrayMenuItems();
                 });
