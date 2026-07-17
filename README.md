@@ -11,7 +11,8 @@ STICam streams low-latency H.264 video from an Android device to a Windows PC ov
 
 * **Low-Latency Streaming**: Fast, real-time H.264 encoding and streaming using the device's native hardware.
 * **Manual Camera Controls**: Full adjustment of ISO, shutter speed, focus distance, exposure compensation, white balance Kelvin temperature, and flashlight torch from the Windows application.
-* **Face Tracking**: On-device real-time face detection using Google ML Kit (completely free and runs locally offline with no cloud server costs). It automatically pans and zooms to keep you centered and framed cleanly without jitter or sudden jumps.
+* **Face Tracking**: On-device real-time face tracking using MediaPipe Face Landmarker — 468 3D landmarks, completely free and fully offline. It automatically pans and zooms to keep you centered and framed cleanly without jitter or sudden jumps.
+* **AR Face Filters**: Face-paint overlays (Tiger, Skull, Ironman) rendered on the GPU over your tracked face mesh, selectable from the phone or the Windows app.
 * **Dual Connection Modes**: Wi-Fi (wireless connection) and USB (automated ADB port forwarding configuration).
 * **Local Recording**: Save the stream directly as an MP4 file on the phone's storage with zero quality loss.
 * **Virtual Webcam & RTSP**: Registers a DirectShow camera on Windows or exposes an RTSP stream for OBS Studio and VLC.
@@ -70,6 +71,6 @@ This project is licensed under the GNU General Public License v2.0.
 * **FFmpeg**: Distributed under the GNU GPL v2.0. Bundled binaries are the [gyan.dev builds](https://www.gyan.dev/ffmpeg/builds/); corresponding source at [ffmpeg.org](https://ffmpeg.org/download.html).
 * **Sdcb.FFmpeg**: .NET FFmpeg bindings distributed under the MIT License.
 * **OBS Virtual Camera**: DirectShow module from [OBS Studio](https://github.com/obsproject/obs-studio) 32.0.4, distributed under the GNU GPL v2.0.
-* **Google ML Kit**: Face detection SDK distributed under Google APIs Terms of Service.
+* **MediaPipe**: Face Landmarker task and runtime distributed under the Apache License 2.0 (the bundled `face_landmarker.task` model is from [Google MediaPipe](https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker)).
 * **Jetpack Compose, AndroidX & Kotlin Coroutines**: Distributed under the Apache License 2.0.
 * **Lalezar Font**: Typeface by Borna Izadpanah distributed under the SIL Open Font License 1.1.
