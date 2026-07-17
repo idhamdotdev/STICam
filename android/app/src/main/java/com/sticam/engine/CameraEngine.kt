@@ -172,6 +172,11 @@ class CameraEngine(private val context: Context) {
     private var isReframingPan = false
     private var isReframingZoom = false
 
+    // Maximum zoom speed (zoom units per second). Caps the EMA so engaging,
+    // re-zooming, and disengaging are constant cinematic glides instead of
+    // the EMA's big first step: 1.0x -> 1.7x takes roughly two seconds.
+    private val zoomRatePerSec = 0.35f
+
     // Velocity accumulators for momentum-based smoothing (talking head dampening)
     private var velX = 0f
     private var velY = 0f
@@ -1177,7 +1182,13 @@ class CameraEngine(private val context: Context) {
 
         currentCropCenter.x += alphaPan * (targetCenterX - currentCropCenter.x)
         currentCropCenter.y += alphaPan * (targetCenterY - currentCropCenter.y)
-        currentCropZoom     += alphaZoom * (targetZoom - currentCropZoom)
+
+        // Cinematic zoom: an EMA's largest step is its FIRST one, which made
+        // engaging feel like an instant zoom. Cap the speed so every zoom
+        // transition is a constant glide that the EMA eases to a soft stop.
+        val zoomStep = alphaZoom * (targetZoom - currentCropZoom)
+        val maxZoomStep = zoomRatePerSec * 0.033f   // ticks run every 33 ms
+        currentCropZoom += zoomStep.coerceIn(-maxZoomStep, maxZoomStep)
 
         // Clear velocity variables
         velX = 0f
