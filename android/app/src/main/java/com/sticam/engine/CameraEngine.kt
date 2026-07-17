@@ -1017,35 +1017,40 @@ class CameraEngine(private val context: Context) {
         val full = sensorRect ?: return
         val bounds = meshData.bounds
 
-        val faceCenterX = bounds.centerX()
-        val faceCenterY = bounds.centerY()
+        // The detection frames come from the GL pipeline, whose readback is
+        // vertically flipped relative to the displayed stream (GL bottom-left
+        // origin): X matches the view, Y is inverted. Convert to true view
+        // coordinates first — feeding the raw Y into the mapping turns the
+        // vertical axis into a positive-feedback loop that runs the crop off
+        // the face until it pins at the sensor edge (then detection lock-out).
+        val viewFaceX = bounds.centerX()
+        val viewFaceY = 1.0f - bounds.centerY()
 
         // Framing anchor: instead of centering the face itself, center a
         // virtual point offset from it in view space — the face then lands at
         // trackAnchorX of the frame while every downstream stage (rotation
         // mapping, smoothing, clamping) stays unchanged.
-        val anchoredFaceX = faceCenterX + (0.5f - trackAnchorX)
+        val anchoredFaceX = viewFaceX + (0.5f - trackAnchorX)
 
-        // MediaPipe landmarks are already in normalized 0..1 screen-space.
-        // Map directly to sensor space using the sensor orientation.
+        // Map view space to sensor space using the sensor orientation.
         val nsX: Float
         val nsY: Float
         when (sensorOrientation) {
             90 -> {
-                nsX = faceCenterY
+                nsX = viewFaceY
                 nsY = 1.0f - anchoredFaceX
             }
             180 -> {
                 nsX = 1.0f - anchoredFaceX
-                nsY = 1.0f - faceCenterY
+                nsY = 1.0f - viewFaceY
             }
             270 -> {
-                nsX = 1.0f - faceCenterY
+                nsX = 1.0f - viewFaceY
                 nsY = anchoredFaceX
             }
             else -> {
                 nsX = anchoredFaceX
-                nsY = faceCenterY
+                nsY = viewFaceY
             }
         }
 
