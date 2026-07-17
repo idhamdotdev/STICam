@@ -71,6 +71,10 @@ fun ArOverlay(state: SticamUiState) {
                 val center = Offset(bounds.centerX(), bounds.top - faceWidth * 0.2f)
                 drawEmoji("👑", center, 0.8f)
             }
+            "England" -> {
+                val center = Offset(bounds.centerX(), bounds.top - faceWidth * 0.45f)
+                drawEmoji("🏴󠁧󠁢󠁥󠁮󠁧󠁿", center, 0.6f)
+            }
         }
     }
 }

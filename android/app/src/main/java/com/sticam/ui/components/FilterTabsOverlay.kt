@@ -22,8 +22,10 @@ import com.sticam.ui.SticamViewModel
 fun FilterTabsOverlay(state: SticamUiState, vm: SticamViewModel) {
     var activeTab by remember { mutableStateOf("AR") }
     
-    val arFilters = listOf("None", "Crown")
-    val lutFilters = listOf("None")
+    val arFilters = listOf("None", "Crown", "England")
+    val beautyFilters = listOf("None", "Smooth", "Slim Face")
+    val lutFilters = listOf("None", "Warm", "Cool", "Grayscale", "Vivid", "Cinematic")
+    val funFilters = listOf("None", "TigerPaint", "Skull", "Ironman", "Big Eyes")
 
     Column(
         modifier = Modifier
@@ -39,8 +41,12 @@ fun FilterTabsOverlay(state: SticamUiState, vm: SticamViewModel) {
             horizontalArrangement = Arrangement.Center
         ) {
             TabButton("AR", activeTab == "AR") { activeTab = "AR" }
-            Spacer(modifier = Modifier.width(8.dp))
+            Spacer(modifier = Modifier.width(4.dp))
+            TabButton("Beauty", activeTab == "Beauty") { activeTab = "Beauty" }
+            Spacer(modifier = Modifier.width(4.dp))
             TabButton("Color", activeTab == "Color") { activeTab = "Color" }
+            Spacer(modifier = Modifier.width(4.dp))
+            TabButton("Fun", activeTab == "Fun") { activeTab = "Fun" }
         }
 
         Spacer(modifier = Modifier.height(12.dp))
@@ -54,22 +60,32 @@ fun FilterTabsOverlay(state: SticamUiState, vm: SticamViewModel) {
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(horizontal = 8.dp)
         ) {
-            if (activeTab == "AR") {
-                items(arFilters) { filter ->
-                    FilterItem(
-                        label = filter,
-                        isActive = state.activeArFilter == filter,
-                        onClick = { vm.setArFilter(filter) }
-                    )
+            val currentFilters = when (activeTab) {
+                "AR" -> arFilters
+                "Beauty" -> beautyFilters
+                "Color" -> lutFilters
+                "Fun" -> funFilters
+                else -> arFilters
+            }
+            
+            items(currentFilters) { filter ->
+                val isActive = if (activeTab == "Color") {
+                    state.activeLutFilter == filter
+                } else {
+                    state.activeArFilter == filter
                 }
-            } else {
-                items(lutFilters) { filter ->
-                    FilterItem(
-                        label = filter,
-                        isActive = state.activeLutFilter == filter,
-                        onClick = { vm.setLutFilter(filter) }
-                    )
-                }
+                
+                FilterItem(
+                    label = filter,
+                    isActive = isActive,
+                    onClick = {
+                        if (activeTab == "Color") {
+                            vm.setLutFilter(filter)
+                        } else {
+                            vm.setArFilter(filter)
+                        }
+                    }
+                )
             }
         }
     }
@@ -84,7 +100,7 @@ private fun TabButton(label: String, isActive: Boolean, onClick: () -> Unit) {
                 if (isActive) Color(0xFF1ECC91) else Color.Transparent,
                 RoundedCornerShape(16.dp)
             )
-            .padding(horizontal = 24.dp, vertical = 8.dp),
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         contentAlignment = Alignment.Center
     ) {
         Text(

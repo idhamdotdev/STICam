@@ -489,7 +489,7 @@ private fun CameraPreviewLayer(
         // On the GL path, OpenGL adds a vertical flip (equivalent to 180°), so:
         // (360 - sensorOri + 180) % 360.
         val baseRot = if (isGlPath) {
-            (360 - sensorOri + 180) % 360
+            0
         } else {
             if (state.isFrontCamera) (360 - sensorOri + 180) % 360
             else (360 - sensorOri) % 360
@@ -565,7 +565,7 @@ private fun CameraPreviewLayer(
                 modifier = Modifier.fillMaxSize(),
             )
             
-            if (state.debugInfo.isNotEmpty()) {
+            if (state.showDebugInfo && state.debugInfo.isNotEmpty()) {
                 androidx.compose.material3.Text(
                     text = state.debugInfo,
                     color = androidx.compose.ui.graphics.Color.White,
@@ -824,6 +824,25 @@ fun IdleConnectionScreen(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clickable { vm.toggleDebugInfo() }
+                        .padding(vertical = 8.dp)
+                ) {
+                    CustomCheckbox(checked = state.showDebugInfo)
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text(
+                        text = "SHOW DEBUG OVERLAY",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = Lalezar
+                    )
+                }
             }
 
             Column(
@@ -880,6 +899,25 @@ fun CustomRadioButton(selected: Boolean) {
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color(0xFFD1D5DB), CircleShape)
+            )
+        }
+    }
+}
+
+@Composable
+fun CustomCheckbox(checked: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(24.dp)
+            .border(2.dp, Color.White, RoundedCornerShape(4.dp))
+            .padding(4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        if (checked) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFFD1D5DB), RoundedCornerShape(2.dp))
             )
         }
     }
