@@ -161,6 +161,17 @@ class CameraEngine(private val context: Context) {
     // via set_params {"track_anchor": "center"|"left"}.
     @Volatile var trackAnchorX: Float = 0.5f
 
+    // Hold-when-framed: the crop moves only while "reframing". The face may
+    // drift up to reframePanZone (fraction of the crop) from its framed spot
+    // before a re-frame starts, and the glide stops once within
+    // settlePanZone. Zoom equivalents in zoom units.
+    private val reframePanZone = 0.07f
+    private val settlePanZone = 0.015f
+    private val reframeZoomDelta = 0.18f
+    private val settleZoomDelta = 0.04f
+    private var isReframingPan = false
+    private var isReframingZoom = false
+
     // Velocity accumulators for momentum-based smoothing (talking head dampening)
     private var velX = 0f
     private var velY = 0f
@@ -188,6 +199,8 @@ class CameraEngine(private val context: Context) {
                     noFaceDetectedFramesCount = 0
                     consecutiveFaceFrames = 0
                     isInitialEngage = true
+                    isReframingPan = false
+                    isReframingZoom = false
                     velX = 0f; velY = 0f; velZoom = 0f  // clear any residual momentum
                     smoothedFaceHeight = 0f              // reset EMA so zoom re-anchors cleanly
                     smoothedSensorX = 0f
@@ -1066,11 +1079,24 @@ class CameraEngine(private val context: Context) {
         val currentLeft = currentCropCenter.x - cropW / 2f
         val currentTop = currentCropCenter.y - cropH / 2f
 
-        // Use the smoothed coordinates for the target calculation.
-        // We can entirely eliminate the discrete step-based dead zone because the smoothed input 
-        // is 100% continuous, resulting in a beautifully organic panning movement.
-        val targetXBeforeCoerce = currentLeft + smoothedSensorX * cropW
-        val targetYBeforeCoerce = currentTop + smoothedSensorY * cropH
+        // ── Hold-when-framed (hysteresis dead-zone) ──────────────────────────
+        // While the face stays within reframePanZone of its framed position
+        // the camera does not move at all — talking and small posture shifts
+        // produce zero sway. Once the face drifts past the zone, the crop
+        // glides (normal EMA) until it settles inside settlePanZone, then
+        // locks again — like a camera operator holding a shot.
+        val errX = smoothedSensorX - 0.5f
+        val errY = smoothedSensorY - 0.5f
+        val errMag = maxOf(Math.abs(errX), Math.abs(errY))
+        if (!isReframingPan && errMag > reframePanZone) {
+            isReframingPan = true
+        } else if (isReframingPan && errMag < settlePanZone) {
+            isReframingPan = false
+        }
+
+        val followPan = isReframingPan || isInitialEngage
+        val targetXBeforeCoerce = if (followPan) currentLeft + smoothedSensorX * cropW else currentCropCenter.x
+        val targetYBeforeCoerce = if (followPan) currentTop + smoothedSensorY * cropH else currentCropCenter.y
 
         // Auto-zoom: hold the face near ~58% of frame height, but clamp the
         // punch-in to the talking-head band [trackMinZoom, trackMaxZoom] —
@@ -1097,9 +1123,16 @@ class CameraEngine(private val context: Context) {
         val edgeDistY = minOf(targetYBeforeCoerce - full.top, full.bottom - targetYBeforeCoerce).coerceAtLeast(1f)
         val edgeAssistZoom = maxOf(full.width() / (2f * edgeDistX), full.height() / (2f * edgeDistY))
 
-        // Direct assignment to allow responsive zoom target updates.
-        // The smoothing is handled beautifully at 30 FPS by alphaZoom in tickFaceTracking().
-        targetZoom = maxOf(rawTargetZoom, edgeAssistZoom.coerceAtMost(zoomCap))
+        // Zoom holds too: only re-zoom when the face size meaningfully changed
+        // (leaning in/out), then settle and lock — no continuous breathing.
+        val desiredZoom = maxOf(rawTargetZoom, edgeAssistZoom.coerceAtMost(zoomCap))
+        val zoomErr = Math.abs(desiredZoom - currentCropZoom)
+        if (!isReframingZoom && zoomErr > reframeZoomDelta) {
+            isReframingZoom = true
+        } else if (isReframingZoom && zoomErr < settleZoomDelta) {
+            isReframingZoom = false
+        }
+        targetZoom = if (isReframingZoom || isInitialEngage) desiredZoom else currentCropZoom
 
         // Compute crop boundaries and clamp crop center using the calculated targetZoom
         val newCropW = full.width() / targetZoom
