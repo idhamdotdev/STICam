@@ -61,10 +61,8 @@ android/uidump*.xml
 *screen.png
 *.mp4
 
-# ── Installer Assets & Installer Script ────────────────────────────
-windows/SticamInstaller.iss
-windows/installer_icon.ico
-windows/sidebar_image.bmp
+# ── Installer ──────────────────────────────────────────────────────
+# Script + referenced images are tracked; only outputs/mockups ignored
 windows/sidebar_image.png
-windows/small_image.bmp
+/output_newest/
 
