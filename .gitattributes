@@ -1,0 +1,18 @@
+# Text files are stored with LF and checked out per-platform
+* text=auto
+
+# Windows-run scripts always keep CRLF on checkout
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.iss text eol=crlf
+
+# Binary files — never normalize
+*.png  binary
+*.ico  binary
+*.bmp  binary
+*.ttf  binary
+*.dll  binary
+*.jar  binary
+*.apk  binary
+*.jks  binary
+*.task binary
