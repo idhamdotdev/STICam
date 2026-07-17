@@ -99,6 +99,7 @@ namespace SticamHost
         private bool _isLive;
         private bool _mirrorVideo;
         private bool _faceTrackingActive;
+        private bool _faceTrackingLeft;
         private bool _cinemaMode;
         private bool _isSyncing;
         private int _currentRotation = 0;
@@ -922,6 +923,7 @@ namespace SticamHost
             }
 
             _faceTrackingActive = false;
+            _faceTrackingLeft   = false;
             UpdateMenuFaceTrackingButton();
 
             string host      = _rbUsb.Checked ? "127.0.0.1" : _tbIp.Text.Trim();
@@ -1225,6 +1227,7 @@ namespace SticamHost
             _adb?.Stop();            _adb      = null;
 
             _faceTrackingActive = false;
+            _faceTrackingLeft   = false;
             UpdateMenuFaceTrackingButton();
 
             _btnConnect.Enabled    = true;
@@ -1296,14 +1299,25 @@ namespace SticamHost
 
         private void OnMenuFaceTrackingToggle(object? s, EventArgs e)
         {
-            _faceTrackingActive = !_faceTrackingActive;
+            // Cycle: Off → Middle (centered) → Left (left-third) → Off
+            if (!_faceTrackingActive)      { _faceTrackingActive = true;  _faceTrackingLeft = false; }
+            else if (!_faceTrackingLeft)   { _faceTrackingLeft   = true; }
+            else                           { _faceTrackingActive = false; _faceTrackingLeft = false; }
+
             _receiver?.SendFaceTracking(_faceTrackingActive);
+            if (_faceTrackingActive)
+            {
+                _receiver?.SendCameraControl(iso: null, brightness: null, focus: null,
+                    trackAnchor: _faceTrackingLeft ? "left" : "center");
+            }
             UpdateMenuFaceTrackingButton();
         }
 
         private void UpdateMenuFaceTrackingButton()
         {
-            _menuFaceTracking.Text = _faceTrackingActive ? "🤖  AI Face Tracking: On" : "🤖  AI Face Tracking: Off";
+            _menuFaceTracking.Text = !_faceTrackingActive
+                ? "🤖  AI Face Tracking: Off"
+                : (_faceTrackingLeft ? "🤖  AI Face Tracking: Left" : "🤖  AI Face Tracking: Middle");
             _menuFaceTracking.ForeColor = _faceTrackingActive ? Color.FromArgb(30, 204, 145) : Color.FromArgb(180, 180, 180);
         }
 

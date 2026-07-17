@@ -134,7 +134,7 @@ namespace SticamHost.Stream
             SendCommand(json);
         }
 
-        public void SendCameraControl(int? iso, float? brightness, float? focus, float? zoom = null, bool? flash = null, string? cameraId = null, string? resolution = null, string? arFilter = null, string? lutFilter = null)
+        public void SendCameraControl(int? iso, float? brightness, float? focus, float? zoom = null, bool? flash = null, string? cameraId = null, string? resolution = null, string? arFilter = null, string? lutFilter = null, string? trackAnchor = null)
         {
             var payload = new System.Collections.Generic.Dictionary<string, object>
             {
@@ -149,6 +149,7 @@ namespace SticamHost.Stream
             if (!string.IsNullOrEmpty(resolution)) payload["resolution"] = resolution;
             if (!string.IsNullOrEmpty(arFilter)) payload["ar_filter"] = arFilter;
             if (!string.IsNullOrEmpty(lutFilter)) payload["lut_filter"] = lutFilter;
+            if (!string.IsNullOrEmpty(trackAnchor)) payload["track_anchor"] = trackAnchor;
 
             var json = JsonSerializer.Serialize(payload);
             SendCommand(json);

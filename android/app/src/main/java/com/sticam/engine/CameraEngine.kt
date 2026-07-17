@@ -156,6 +156,11 @@ class CameraEngine(private val context: Context) {
     private val trackMinZoom = 1.5f
     private val trackMaxZoom = 2.0f
 
+    // Horizontal framing anchor: 0.5 places the face at frame center, 1/3
+    // composes it at the left third ("interview" look). Set from the host
+    // via set_params {"track_anchor": "center"|"left"}.
+    @Volatile var trackAnchorX: Float = 0.5f
+
     // Velocity accumulators for momentum-based smoothing (talking head dampening)
     private var velX = 0f
     private var velY = 0f
@@ -1003,6 +1008,12 @@ class CameraEngine(private val context: Context) {
         val faceCenterX = bounds.centerX()
         val faceCenterY = bounds.centerY()
 
+        // Framing anchor: instead of centering the face itself, center a
+        // virtual point offset from it in view space — the face then lands at
+        // trackAnchorX of the frame while every downstream stage (rotation
+        // mapping, smoothing, clamping) stays unchanged.
+        val anchoredFaceX = faceCenterX + (0.5f - trackAnchorX)
+
         // MediaPipe landmarks are already in normalized 0..1 screen-space.
         // Map directly to sensor space using the sensor orientation.
         val nsX: Float
@@ -1010,18 +1021,18 @@ class CameraEngine(private val context: Context) {
         when (sensorOrientation) {
             90 -> {
                 nsX = faceCenterY
-                nsY = 1.0f - faceCenterX
+                nsY = 1.0f - anchoredFaceX
             }
             180 -> {
-                nsX = 1.0f - faceCenterX
+                nsX = 1.0f - anchoredFaceX
                 nsY = 1.0f - faceCenterY
             }
             270 -> {
                 nsX = 1.0f - faceCenterY
-                nsY = faceCenterX
+                nsY = anchoredFaceX
             }
             else -> {
-                nsX = faceCenterX
+                nsX = anchoredFaceX
                 nsY = faceCenterY
             }
         }
@@ -1074,9 +1085,18 @@ class CameraEngine(private val context: Context) {
         } else {
             currentCropZoom.coerceIn(trackMinZoom, zoomCap)
         }
-        // Direct assignment to allow responsive zoom target updates. 
+
+        // Edge-assist: when the desired center is pinned against the sensor
+        // boundary (face near the edge of the FOV), a wider crop physically
+        // cannot center the composition — zoom in a little more so the
+        // smaller crop regains the travel it needs. Capped at zoomCap.
+        val edgeDistX = minOf(targetXBeforeCoerce - full.left, full.right - targetXBeforeCoerce).coerceAtLeast(1f)
+        val edgeDistY = minOf(targetYBeforeCoerce - full.top, full.bottom - targetYBeforeCoerce).coerceAtLeast(1f)
+        val edgeAssistZoom = maxOf(full.width() / (2f * edgeDistX), full.height() / (2f * edgeDistY))
+
+        // Direct assignment to allow responsive zoom target updates.
         // The smoothing is handled beautifully at 30 FPS by alphaZoom in tickFaceTracking().
-        targetZoom = rawTargetZoom
+        targetZoom = maxOf(rawTargetZoom, edgeAssistZoom.coerceAtMost(zoomCap))
 
         // Compute crop boundaries and clamp crop center using the calculated targetZoom
         val newCropW = full.width() / targetZoom

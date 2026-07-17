@@ -494,7 +494,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                 srv.onSignalStrengthChanged = { bars -> _ui.update { it.copy(wifiSignalBars = bars) } }
                 
                 // Wire up incoming UI control events from Windows Client
-                srv.onParamsChangedFromHost = { zoom, faceTracking, iso, brightness, focus, flash, cameraId, resolution, arFilter, lutFilter ->
+                srv.onParamsChangedFromHost = { zoom, faceTracking, iso, brightness, focus, flash, cameraId, resolution, arFilter, lutFilter, trackAnchor ->
                     if (zoom != null) setZoom(zoom)
                     if (faceTracking != null) setFaceTracking(faceTracking)
                     if (iso != null) setIso(iso)
@@ -517,6 +517,11 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                     
                     if (arFilter != null && AR_FILTERS_ENABLED) setArFilter(arFilter)
                     if (lutFilter != null) setLutFilter(lutFilter)
+                    // Framing anchor for face tracking: "left" composes the
+                    // face at the left third, anything else centers it.
+                    if (trackAnchor != null) {
+                        engine.trackAnchorX = if (trackAnchor == "left") 1f / 3f else 0.5f
+                    }
                 }
                 
                 srv.start()
