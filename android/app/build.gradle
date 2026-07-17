@@ -3,6 +3,16 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+// ── Release signing ─────────────────────────────────────────────────────────
+// Credentials live in android/keystore.properties (never committed — see
+// keystore.properties.example). Without it, release falls back to the debug
+// key so CI and fresh clones can still build.
+def keystorePropsFile = rootProject.file('keystore.properties')
+def keystoreProps = new Properties()
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
 android {
     namespace 'com.sticam'
     compileSdk 34
@@ -19,12 +29,23 @@ android {
         }
     }
 
+    signingConfigs {
+        if (keystorePropsFile.exists()) {
+            release {
+                storeFile rootProject.file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.debug
+            signingConfig keystorePropsFile.exists() ? signingConfigs.release : signingConfigs.debug
         }
         debug {
             applicationIdSuffix ".debug"
