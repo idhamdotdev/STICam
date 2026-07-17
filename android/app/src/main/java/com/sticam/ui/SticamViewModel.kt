@@ -117,6 +117,9 @@ val SticamUiState.zoomLabel: String get() = "%.1f×".format(zoom)
 
 // ── ViewModel ─────────────────────────────────────────────────────────────────
 
+/** AR face-paint filters are deferred to v2.0.0 — mirror of the Windows-host flag. */
+private const val AR_FILTERS_ENABLED = false
+
 class SticamViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _ui = MutableStateFlow(SticamUiState())
@@ -512,7 +515,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                         }
                     }
                     
-                    if (arFilter != null) setArFilter(arFilter)
+                    if (arFilter != null && AR_FILTERS_ENABLED) setArFilter(arFilter)
                     if (lutFilter != null) setLutFilter(lutFilter)
                 }
                 
