@@ -72,6 +72,10 @@ namespace SticamHost
         private readonly FlowLayoutPanel _flowArFilters;
         private string _activeArFilter = "None";
 
+        // AR face-paint filters are deferred to v2.0.0 — flip to true to show
+        // the selector again (must match AR_FILTERS_ENABLED on the phone side).
+        private static readonly bool ArFiltersEnabled = false;
+
         // hidden idle controls kept for logic compatibility
         private readonly CheckBox     _chkVirtualCam;
         private readonly CheckBox     _chkAutoConnect;
@@ -627,7 +631,7 @@ namespace SticamHost
                 AutoSize = true,
                 BackColor = Color.Transparent
             };
-            _panelControls.Controls.Add(_lblArFilterTitle);
+            if (ArFiltersEnabled) _panelControls.Controls.Add(_lblArFilterTitle);
 
             yOffset += 20;
             _flowArFilters = new FlowLayoutPanel
@@ -647,7 +651,7 @@ namespace SticamHost
                 var btn = MakeFilterButton(fName);
                 _flowArFilters.Controls.Add(btn);
             }
-            _panelControls.Controls.Add(_flowArFilters);
+            if (ArFiltersEnabled) _panelControls.Controls.Add(_flowArFilters);
             UpdateFilterUiSelection("None");
             yOffset += 184;
 
