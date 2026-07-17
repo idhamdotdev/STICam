@@ -13,6 +13,7 @@ import java.lang.ref.WeakReference
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sticam.ConnectionMode
+import com.sticam.StreamingService
 import com.sticam.engine.CameraEngine
 import com.sticam.engine.RecordingSession
 import com.sticam.server.StreamServer
@@ -519,6 +520,8 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 reapplyCameraStates()
                 _ui.update { it.copy(isStreaming = true, statusMessage = "WAITING_CLIENT") }
+                // Hold camera access while the app is backgrounded
+                StreamingService.start(getApplication())
             } catch (e: Exception) {
                 _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
                 srv.stop(); server = null
@@ -530,6 +533,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         stopRecording()
         engine.stop()
         server?.stop(); server = null
+        StreamingService.stop(getApplication())
         _ui.update { it.copy(isStreaming = false, clientConnected = false, statusMessage = "STANDBY") }
     }
 

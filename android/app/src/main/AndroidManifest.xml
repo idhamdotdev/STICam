@@ -24,8 +24,12 @@
         android:name="android.permission.READ_MEDIA_VIDEO"
         tools:targetApi="33" />
 
-    <!-- Foreground service keeps streaming alive when app is backgrounded -->
+    <!-- Foreground service (type camera) keeps streaming alive when the app
+         is backgrounded — see StreamingService -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- API 33+: show the "streaming" notification (optional — stream works without it) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <!-- Declare camera hardware requirement -->
     <uses-feature
@@ -56,6 +60,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Holds camera access while streaming in the background -->
+        <service
+            android:name=".StreamingService"
+            android:exported="false"
+            android:foregroundServiceType="camera" />
     </application>
 
 </manifest>

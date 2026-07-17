@@ -21,11 +21,13 @@ class MainActivity : ComponentActivity() {
     /**
      * Permission launcher — streams begin via the TextureView SurfaceTextureListener
      * inside SticamScreen once CAMERA is confirmed. We only guard against denial here.
+     * POST_NOTIFICATIONS (13+) may be declined without consequence: streaming still
+     * works, the foreground-service notification is simply hidden.
      */
-    private val cameraPermLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (!granted) vm.onPermissionDenied()
+    private val permLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        if (results[android.Manifest.permission.CAMERA] != true) vm.onPermissionDenied()
         // If granted: SticamScreen's SurfaceTextureListener calls vm.startStreaming()
         // as soon as the TextureView surface becomes available — no race condition.
     }
@@ -52,8 +54,12 @@ class MainActivity : ComponentActivity() {
         window.statusBarColor     = android.graphics.Color.BLACK
         window.navigationBarColor = android.graphics.Color.BLACK
 
-        // Request CAMERA on first launch
-        cameraPermLauncher.launch(android.Manifest.permission.CAMERA)
+        // Request CAMERA (+ notification permission on 13+) on first launch
+        val perms = mutableListOf(android.Manifest.permission.CAMERA)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            perms += android.Manifest.permission.POST_NOTIFICATIONS
+        }
+        permLauncher.launch(perms.toTypedArray())
 
         setContent {
             SticamTheme {
