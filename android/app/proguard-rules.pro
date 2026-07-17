@@ -17,3 +17,11 @@
 -dontwarn com.google.auto.value.**
 -dontwarn autovalue.shaded.**
 
+# MediaPipe logs through Flogger, which finds its caller by walking the stack;
+# R8 inlining breaks the walk and Graph.<clinit> throws IllegalStateException
+# "no caller found on the stack". Keep Flogger and MediaPipe's protobufs whole.
+-keep class com.google.common.flogger.** { *; }
+-dontwarn com.google.common.flogger.**
+-keep class com.google.protobuf.** { *; }
+-dontwarn com.google.protobuf.**
+
