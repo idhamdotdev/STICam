@@ -57,7 +57,7 @@ class StreamServer(
     /** Fired when SPS and PPS are extracted. Used by ViewModel to enable recording. */
     var onConfigData: ((sps: ByteArray, pps: ByteArray) -> Unit)? = null
     var onSignalStrengthChanged: ((bars: Int) -> Unit)? = null
-    var onParamsChangedFromHost: ((zoom: Float?, faceTracking: Boolean?, iso: Int?, brightness: Float?, focus: Float?, flash: Boolean?, cameraId: String?, resolution: String?, arFilter: String?, lutFilter: String?) -> Unit)? = null
+    var onParamsChangedFromHost: ((zoom: Float?, faceTracking: Boolean?, iso: Int?, brightness: Float?, focus: Float?, flash: Boolean?, cameraId: String?, resolution: String?, arFilter: String?, lutFilter: String?, trackAnchor: String?) -> Unit)? = null
 
     fun sendCommand(json: String) {
         val out = clientOutput ?: return
@@ -307,10 +307,11 @@ class StreamServer(
                     val resolution = if (obj.has("resolution")) obj.getString("resolution") else null
                     val arFilter = if (obj.has("ar_filter")) obj.getString("ar_filter") else null
                     val lutFilter = if (obj.has("lut_filter")) obj.getString("lut_filter") else null
+                    val trackAnchor = if (obj.has("track_anchor")) obj.getString("track_anchor") else null
                     
-                    if (zoom != null || faceTracking != null || iso != null || brightness != null || focus != null || flash != null || cameraId != null || resolution != null || arFilter != null || lutFilter != null) {
+                    if (zoom != null || faceTracking != null || iso != null || brightness != null || focus != null || flash != null || cameraId != null || resolution != null || arFilter != null || lutFilter != null || trackAnchor != null) {
                         scope?.launch(Dispatchers.Main) {
-                            onParamsChangedFromHost?.invoke(zoom, faceTracking, iso, brightness, focus, flash, cameraId, resolution, arFilter, lutFilter)
+                            onParamsChangedFromHost?.invoke(zoom, faceTracking, iso, brightness, focus, flash, cameraId, resolution, arFilter, lutFilter, trackAnchor)
                         }
                     }
                 }
