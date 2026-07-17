@@ -67,9 +67,9 @@ This project is licensed under the GNU General Public License v2.0.
 
 ### Third-Party Software
 * **Android Debug Bridge**: Distributed under the Apache License 2.0.
-* **FFmpeg**: Distributed under the GNU GPL v2.0.
+* **FFmpeg**: Distributed under the GNU GPL v2.0. Bundled binaries are the [gyan.dev builds](https://www.gyan.dev/ffmpeg/builds/); corresponding source at [ffmpeg.org](https://ffmpeg.org/download.html).
 * **Sdcb.FFmpeg**: .NET FFmpeg bindings distributed under the MIT License.
-* **OBS Virtual Camera**: DirectShow components distributed under the GNU GPL v2.0.
+* **OBS Virtual Camera**: DirectShow module from [OBS Studio](https://github.com/obsproject/obs-studio) 32.0.4, distributed under the GNU GPL v2.0.
 * **Google ML Kit**: Face detection SDK distributed under Google APIs Terms of Service.
 * **Jetpack Compose, AndroidX & Kotlin Coroutines**: Distributed under the Apache License 2.0.
 * **Lalezar Font**: Typeface by Borna Izadpanah distributed under the SIL Open Font License 1.1.
