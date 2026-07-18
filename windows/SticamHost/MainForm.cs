@@ -133,10 +133,27 @@ namespace SticamHost
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox   = false;
 
-            // hidden checkboxes for logic
+            // hidden checkbox for logic
             _chkVirtualCam  = new CheckBox { Visible = false, Checked = true };
-            _chkAutoConnect = new CheckBox { Visible = false, Checked = true };
             _chkVirtualCam.CheckedChanged += OnVirtualCamToggle;
+
+            // Visible on the connect screen; the choice persists across runs
+            _chkAutoConnect = new CheckBox
+            {
+                Text      = "Connect automatically on startup",
+                Checked   = HostSettings.AutoConnect,
+                ForeColor = TextDim,
+                BackColor = Color.Transparent,
+                Font      = MakeFont(10f),
+                AutoSize  = true,
+                Location  = new Point(30, 455),
+                Cursor    = Cursors.Hand,
+            };
+            _chkAutoConnect.CheckedChanged += (_, _) =>
+            {
+                HostSettings.AutoConnect = _chkAutoConnect.Checked;
+                HostSettings.Save();
+            };
 
             // ═══════════════════════════════════════════════════════════
             //  IDLE CONTAINER
