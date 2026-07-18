@@ -66,3 +66,6 @@ android/uidump*.xml
 windows/sidebar_image.png
 /output_newest/
 
+
+# Local-only media assets (not distributed)
+android/app/src/main/assets/filters/
