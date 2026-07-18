@@ -20,11 +20,11 @@ STICam streams low-latency H.264 video from an Android device to a Windows PC ov
 
 ### 1. Download the Files
 Go to the [Releases](https://github.com/idhamdotdev/STICam/releases) page and download:
-* The Android client package (`Sticam.apk`).
+* The Android client package (`STICam.apk`).
 * The Windows Host installer (`STICamHost_Installer.exe`).
 
 ### 2. Install the Android Client
-* Transfer `Sticam.apk` to your Android device.
+* Transfer `STICam.apk` to your Android device.
 * Open the file to install it (enable installation from unknown sources if prompted).
 
 ### 3. Install the Windows Host
