@@ -79,7 +79,7 @@ android {
 
 dependencies {
     // ── Compose BOM ───────────────────────────────────────────────────────────
-    def composeBom = platform('androidx.compose:compose-bom:2024.02.00')
+    def composeBom = platform('androidx.compose:compose-bom:2026.06.01')
     implementation composeBom
     androidTestImplementation composeBom
 
