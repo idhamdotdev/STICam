@@ -36,7 +36,7 @@ class CameraEngine(private val context: Context) {
         val MESH_FILTER_ASSETS = mapOf(
             "TigerPaint" to "filters/tiger_paint.png",
             "Skull" to "filters/skull_paint.png",
-            "Ironman" to "filters/ironman_paint.png"
+            "RedBot" to "filters/redbot_paint.png"
         )
     }
 

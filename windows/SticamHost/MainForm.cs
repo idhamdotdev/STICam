@@ -662,7 +662,7 @@ namespace SticamHost
                 AutoScroll = false
             };
 
-            string[] filtersList = new string[] { "None", "Crown", "England", "Smooth", "Slim Face", "TigerPaint", "Skull", "Ironman", "Big Eyes" };
+            string[] filtersList = new string[] { "None", "Crown", "England", "Smooth", "Slim Face", "TigerPaint", "Skull", "RedBot", "Big Eyes" };
             foreach (var fName in filtersList)
             {
                 var btn = MakeFilterButton(fName);
