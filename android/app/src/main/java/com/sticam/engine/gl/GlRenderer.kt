@@ -357,10 +357,13 @@ class GlRenderer(
         st.getTransformMatrix(transformMatrix)
         val timestamp = st.timestamp
         
-        // Draw to preview — apply baseRotation to render upright on phone screen preview surface
+        // Draw to preview — apply baseRotation to render upright on phone screen preview surface.
+        // Front camera: the phone-side preview surface needs an extra quarter
+        // turn relative to the encoder path (measured on-device: encoder
+        // upright at base 270 while the preview was upright at 0).
         eglPreviewSurface?.let {
             egl.makeCurrent(it)
-            drawTexture(baseRotation)
+            drawTexture(if (isFrontCamera) (baseRotation + 90) % 360 else baseRotation)
             drawArTexture()
             drawFaceMesh()
             egl.swapBuffers(it)
