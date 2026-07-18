@@ -25,7 +25,7 @@ fun FilterTabsOverlay(state: SticamUiState, vm: SticamViewModel) {
     val arFilters = listOf("None", "Crown", "England")
     val beautyFilters = listOf("None", "Smooth", "Slim Face")
     val lutFilters = listOf("None", "Warm", "Cool", "Grayscale", "Vivid", "Cinematic")
-    val funFilters = listOf("None", "TigerPaint", "Skull", "Ironman", "Big Eyes")
+    val funFilters = listOf("None", "TigerPaint", "Skull", "RedBot", "Big Eyes")
 
     Column(
         modifier = Modifier
