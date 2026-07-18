@@ -311,6 +311,13 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     // ─────────────────────────────────────────────────────────────────────────
 
     fun selectPreset(p: StreamResolution) {
+        // Resolution is locked to 1080p while face tracking is active —
+        // the detector pipeline is only validated there and other presets
+        // crash the camera session.
+        if (_ui.value.isFaceTrackingEnabled && (p.width != 1920 || p.height != 1080)) {
+            Log.i("SticamViewModel", "Preset ${p.width}x${p.height} blocked: face tracking locks resolution to 1080p")
+            return
+        }
         val oldPreset = _ui.value.preset
         _ui.update { it.copy(preset = p, showPresetSelector = false) }
         if (oldPreset != p) {
@@ -668,8 +675,21 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setFaceTracking(enabled: Boolean) {
+        if (enabled) {
+            // Tracking is only validated at 1080p — switch first if needed.
+            val p = _ui.value.preset
+            if (p.width != 1920 || p.height != 1080) {
+                _ui.value.availableResolutions.find { it.width == 1920 && it.height == 1080 }
+                    ?.let { selectPreset(it) }
+            }
+        }
         _ui.update { it.copy(isFaceTrackingEnabled = enabled) }
-        engine.isFaceTrackingEnabled = enabled
+        // Sequenced through cameraLock so this runs AFTER any preset restart
+        // above — engine.start() clears the flag, so it must be applied to
+        // the post-restart engine, not the one being torn down.
+        viewModelScope.launch {
+            cameraLock.withLock { engine.isFaceTrackingEnabled = enabled }
+        }
     }
 
     fun setArFilter(filterName: String) {
