@@ -172,10 +172,12 @@ class CameraEngine(private val context: Context) {
     private var isReframingPan = false
     private var isReframingZoom = false
 
-    // Maximum zoom speed (zoom units per second). Caps the EMA so engaging,
-    // re-zooming, and disengaging are constant cinematic glides instead of
-    // the EMA's big first step: 1.0x -> 1.7x takes roughly two seconds.
-    private val zoomRatePerSec = 0.35f
+    // Maximum zoom growth per second, as a FRACTION of the current zoom
+    // (log-space rate). A linear cap still feels front-loaded because
+    // 1.0->1.4 is a 40% blow-up while 1.6->2.0 is only 25%; constant
+    // percentage per second is what a real camera zoom feels like.
+    // 0.15 = 15%/s: 1.0x -> 2.0x takes ~5s with a steady visible climb.
+    private val zoomGrowthPerSec = 0.15f
 
     // Velocity accumulators for momentum-based smoothing (talking head dampening)
     private var velX = 0f
@@ -1147,7 +1149,7 @@ class CameraEngine(private val context: Context) {
 
         targetCenterX = targetXBeforeCoerce.coerceIn(full.left + halfCropW, full.right - halfCropW)
         targetCenterY = targetYBeforeCoerce.coerceIn(full.top + halfCropH, full.bottom - halfCropH)
-        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera rawX=${bounds.centerX()} rawY=${bounds.centerY()} outRot=$outputRotation nsX=$nsX nsY=$nsY smX=$smoothedSensorX smY=$smoothedSensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom rawFH=$rawFaceHeight smoothFH=$smoothedFaceHeight rawTZ=$rawTargetZoom initEngage=$isInitialEngage")
+        Log.i(TAG, "TrackMath: FRONT=$isFrontCamera rawX=${bounds.centerX()} rawY=${bounds.centerY()} outRot=$outputRotation nsX=$nsX nsY=$nsY smX=$smoothedSensorX smY=$smoothedSensorY tX=$targetCenterX tY=$targetCenterY tZ=$targetZoom curZ=$currentCropZoom rawFH=$rawFaceHeight smoothFH=$smoothedFaceHeight rawTZ=$rawTargetZoom initEngage=$isInitialEngage reframe=$isReframingPan/$isReframingZoom")
     }
 
     private fun tickFaceTracking() {
@@ -1184,10 +1186,11 @@ class CameraEngine(private val context: Context) {
         currentCropCenter.y += alphaPan * (targetCenterY - currentCropCenter.y)
 
         // Cinematic zoom: an EMA's largest step is its FIRST one, which made
-        // engaging feel like an instant zoom. Cap the speed so every zoom
-        // transition is a constant glide that the EMA eases to a soft stop.
+        // engaging feel like an instant zoom. Cap the magnification rate so
+        // every transition is a steady percentage-per-second glide that the
+        // EMA eases to a soft stop near the target.
         val zoomStep = alphaZoom * (targetZoom - currentCropZoom)
-        val maxZoomStep = zoomRatePerSec * 0.033f   // ticks run every 33 ms
+        val maxZoomStep = currentCropZoom * zoomGrowthPerSec * 0.033f   // ticks run every 33 ms
         currentCropZoom += zoomStep.coerceIn(-maxZoomStep, maxZoomStep)
 
         // Clear velocity variables
