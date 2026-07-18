@@ -337,7 +337,7 @@ namespace SticamHost
             };
             _menuDisconnect   = MakeFlyoutButton("■  Disconnect", Color.FromArgb(220, 60, 60));
             _menuVirtualCam   = MakeFlyoutButton("▶  Start Virtual Webcam", Color.FromArgb(50, 160, 80));
-            _menuFaceTracking = MakeFlyoutButton("🤖  AI Face Tracking: Off", Color.FromArgb(180, 180, 180));
+            _menuFaceTracking = MakeFlyoutButton("🤖  Face Track: Off", Color.FromArgb(180, 180, 180));
             _menuMirror       = MakeFlyoutButton("🪞  Mirror Video", Color.FromArgb(50, 150, 200));
             _menuVcamStatus   = new Label
             {
@@ -980,7 +980,11 @@ namespace SticamHost
 
                 BeginInvoke(() =>
                 {
-                    if (IsDisposed)
+                    // A decoded frame can still be in flight from the decode
+                    // thread when the user disconnects; without this guard it
+                    // used to resurrect the live view (and even the virtual
+                    // cam) right after teardown.
+                    if (IsDisposed || _receiver == null)
                     {
                         clone.Dispose();
                         return;
@@ -1333,9 +1337,13 @@ namespace SticamHost
         private void UpdateMenuFaceTrackingButton()
         {
             _menuFaceTracking.Text = !_faceTrackingActive
-                ? "🤖  AI Face Tracking: Off"
-                : (_faceTrackingLeft ? "🤖  AI Face Tracking: Left" : "🤖  AI Face Tracking: Middle");
+                ? "🤖  Face Track: Off"
+                : (_faceTrackingLeft ? "🤖  Face Track: Left" : "🤖  Face Track: Middle");
             _menuFaceTracking.ForeColor = _faceTrackingActive ? Color.FromArgb(30, 204, 145) : Color.FromArgb(180, 180, 180);
+
+            // Resolution is locked to 1080p while tracking (the phone enforces
+            // it too — other presets crash the camera pipeline).
+            if (_cbResolution != null) _cbResolution.Enabled = !_faceTrackingActive;
         }
 
         // ── Helpers ──────────────────────────────────────────────────────────
