@@ -25,7 +25,7 @@
     <!-- FFmpeg bindings + native DLLs for H.264 decoding.
          Pinned to the version NuGet actually resolves — 6.0.0/6.0.0.20230302
          were unlisted upstream and floated to 6.0.26 anyway (NU1603). -->
-    <PackageReference Include="Sdcb.FFmpeg"                        Version="6.0.26" />
+    <PackageReference Include="Sdcb.FFmpeg"                        Version="7.0.0" />
     <PackageReference Include="Sdcb.FFmpeg.runtime.windows-x64"   Version="6.0.26" />
 
     <!-- System.Text.Json already in .NET 8 BCL — no extra ref needed -->
