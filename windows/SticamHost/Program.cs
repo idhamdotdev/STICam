@@ -58,6 +58,13 @@ namespace SticamHost
         {
             try
             {
+                // 0. Remove the legacy "Sticam Camera" registration left behind
+                //    by the old register_sticam.ps1 — it made a second (ghost)
+                //    camera appear next to "STICam Camera" in every app.
+                Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(
+                    @"Software\Classes\CLSID\{860BB310-5D01-11d0-BD3B-00A0C911CE86}\Instance\{D77F129F-53C4-4959-8984-BB2996200234}",
+                    throwOnMissingSubKey: false);
+
                 // 1. COM CLSID Entry
                 string clsidPath = @"Software\Classes\CLSID\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}";
                 using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(clsidPath))
