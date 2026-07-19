@@ -1,5 +1,9 @@
 # Automated dependency + security updates.
 # Dependabot opens PRs when a dependency has an update or a known vulnerability.
+# Breaking MAJOR version bumps are ignored to avoid noisy, build-breaking PRs.
+# Minor, patch, and security updates still come through. To take a specific
+# major anyway, comment `@dependabot ignore` settings on the PR or remove the
+# relevant `ignore` block below.
 version: 2
 updates:
   # Android client (Gradle)
@@ -10,6 +14,9 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # Windows host (.NET / NuGet)
   - package-ecosystem: "nuget"
@@ -19,6 +26,9 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   # GitHub Actions workflows
   - package-ecosystem: "github-actions"
@@ -27,3 +37,6 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "ci"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
