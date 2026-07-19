@@ -11,7 +11,7 @@ namespace SticamHost.VirtualCamera
     /// <summary>
     /// Writes raw NV12 video frames directly to the OBS Virtual Camera shared memory region.
     /// This makes the video instantly visible in the standalone DirectShow virtual camera device 
-    /// (e.g. "Sticam Camera" or "OBS Virtual Camera") without needing OBS Studio running.
+    /// (e.g. "STICam Camera" or "OBS Virtual Camera") without needing OBS Studio running.
     /// </summary>
     public sealed class ObsVirtualCamQueue : IDisposable
     {
