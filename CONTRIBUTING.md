@@ -49,7 +49,7 @@ conventions. Don't reformat unrelated code in a feature PR.
 
 ## License
 
-STICam is licensed under the **GNU General Public License v2.0**. By submitting
+STICam is licensed under the **GNU General Public License v3.0**. By submitting
 a contribution, you agree that it is licensed under the same terms.
 
 ## A Note on Response Time
