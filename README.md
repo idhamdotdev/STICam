@@ -143,7 +143,48 @@ sources, license references, and distribution notes.
 
 ## Built With OpenAI Codex
 
-**OpenAI Codex (GPT-5.6)** audited this repository and rewrote its documentation.
+STICam existed before OpenAI Build Week. This section documents specifically what was
+built and changed with **OpenAI Codex (GPT-5.6)** during the Submission Period
+(13–21 July 2026), separated from earlier work.
+
+### Security hardening branch — 13 July
+
+Branch: [`codex/v1.1.0-hardening`](https://github.com/idhamdotdev/STICam/tree/codex/v1.1.0-hardening)
+(based on the `v1.1.0` tag — **not merged into `main`**, which continued to v1.5.0 on a
+separate track). 54 files changed, +4,359 / −1,183.
+
+Codex replaced the unauthenticated plaintext connection with an authenticated, encrypted
+transport: pairing-key handshake with PBKDF2-HMAC-SHA256 derivation, AES-256-GCM records
+with directional keys, authenticated sequence numbers, and replay/order rejection. Keys
+are stored with DPAPI on Windows and a non-exportable Android Keystore key on the phone.
+It wrote deterministic test vectors for both platforms plus a negative test proving an
+invalid handshake proof is rejected, and documented the design — including its explicit
+lack of forward secrecy — in `docs/PROTOCOL.md`.
+
+It also made MP4 recording actually reachable and keyframe-safe (MediaStore-aware on API
+29+), added camera-generation guards against stale Camera2 callbacks, corrected MediaCodec
+buffer ownership, added keyframe-aware congestion recovery, removed unsafe null assertions
+and unused permissions, hardened the ADB and receiver lifecycles, and removed the automatic
+COM virtual-camera registration along with its bundled OBS binary. It added the project's
+first automated tests, CI for both platforms, Gradle and NuGet lock files, and Actions
+pinned to reviewed commit SHAs.
+
+I chose to ship v1.5.0 (MediaPipe face tracking, .NET 10) first, so this branch remains
+unmerged and unreleased — it is published for review, not as a shipped build.
+
+### Windows packaging and code signing — 14 July
+
+Codex explored the Windows distribution path. It prepared the MSIX packaging route for
+Microsoft Store submission (product identity, publisher fields, `.msixupload` format);
+when I decided to defer Store certification, it pivoted to local code signing — producing
+a locally signed development build, the development certificate, and the trust steps
+needed to run it.
+
+This build was for local testing only and was not published as a release; the published
+downloads remain the v1.5.0 assets. Deferring Store submission was my decision, and Codex
+implemented and verified the local signing path.
+
+### Documentation audit and rewrite — 20 July
 
 Codex performed a claim-by-claim comparison of the README against the committed source and
 surfaced several defects that had gone unnoticed:
@@ -162,6 +203,12 @@ surfaced several defects that had gone unnoticed:
 
 Codex then rewrote `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, and `SECURITY.md`, and
 authored `THIRD_PARTY_NOTICES.md`.
+
+### Prior work
+
+The streaming pipeline, MediaPipe face tracking and auto-framing, manual camera controls,
+and the virtual-camera integration predate the Submission Period and are not part of the
+work described above.
 
 ## Contributing
 
