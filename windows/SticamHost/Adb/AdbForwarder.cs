@@ -7,10 +7,16 @@ using System.Threading.Tasks;
 namespace SticamHost.Adb
 {
     /// <summary>
-    /// Manages ADB port forwarding so the Windows host can reach the Sticam Node
-    /// over USB without the user opening a terminal.
+    /// Manages the ADB reverse tunnel so the Android app can reach this Windows
+    /// host over USB without the user opening a terminal.
     ///
-    /// Runs: adb forward tcp:<hostPort> tcp:<devicePort>
+    /// Runs: adb reverse tcp:8765 tcp:8765
+    ///
+    /// Direction matters: the Windows host LISTENS and the phone connects out to
+    /// 127.0.0.1 on the device, which adb tunnels back here. This mirrors Wi-Fi
+    /// mode (where the phone dials the PC's IP), so both modes share one path.
+    /// It is NOT "adb forward" — that would tunnel the other way, for a PC
+    /// dialling a server on the phone.
     ///
     /// The bundled adb.exe is expected at: <appDir>\tools\adb.exe
     /// Falls back to adb.exe on system PATH if not found locally.

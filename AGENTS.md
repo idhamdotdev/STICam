@@ -1,104 +1,122 @@
-# Agent Developer Guide & Boundaries (AGENTS.md)
+# Agent Development Guide
 
-This document establishes boundaries, guidelines, development commands, and coding rules for Claude Code and other AI agents when working within this repository and future Jetpack Compose projects.
+This file defines the working rules for automated coding agents contributing to STICam.
 
----
+## Project Facts
 
-## 1. Development Commands
+- STICam is licensed under the GNU GPL v3.0.
+- `android/` is the Android transmitter, written in Kotlin and Jetpack Compose.
+- `windows/SticamHost/` is the Windows receiver, written in C# and WinForms for .NET 10.
+- Android initiates the TCP connection to the Windows listener on port `8765`.
+- Wi-Fi traffic is intentionally unauthenticated and unencrypted; it is for trusted private networks only.
+- USB mode uses `adb reverse tcp:8765 tcp:8765`.
+- Local recording has a backend but no user-facing control.
+- A standalone RTSP server is not included.
+- DirectShow virtual-camera output is experimental.
 
-### Android Project (`android/`)
-Always run Android commands from the `android/` directory using the Gradle Wrapper.
-- **Sync Dependencies**: `./gradlew.bat --no-daemon` or open `android/` in Android Studio.
-- **Build Debug APK**: `cd android && ./gradlew.bat assembleDebug`
-- **Build Release APK**: `cd android && ./gradlew.bat assembleRelease`
-- **Install Debug on Connected Device**: `cd android && ./gradlew.bat installDebug`
-- **Run Android Tests**: `cd android && ./gradlew.bat test` (Unit tests) or `./gradlew.bat connectedAndroidTest` (Instrumented tests)
-- **Clean Project**: `cd android && ./gradlew.bat clean`
+Do not describe unfinished or experimental behavior as generally available.
 
-### Windows Host Project (`windows/SticamHost/`)
-Always run .NET commands from the `windows/SticamHost/` directory.
-- **Restore Packages**: `cd windows/SticamHost && dotnet restore`
-- **Build Debug**: `cd windows/SticamHost && dotnet build`
-- **Build Release**: `cd windows/SticamHost && dotnet build -c Release`
-- **Run Application**: `cd windows/SticamHost && dotnet run`
-- **Clean Build**: `cd windows/SticamHost && dotnet clean`
+## Repository Structure
 
----
+```text
+android/
+  app/src/main/java/com/sticam/
+    engine/              Camera, encoder, MediaPipe, recording, and OpenGL pipeline
+    server/StreamServer  Outbound Android-to-Windows TCP connection and control protocol
+    ui/                  Compose UI and SticamViewModel
 
-## 2. Project Architecture
+windows/
+  SticamHost/
+    Adb/                 ADB reverse-tunnel management
+    Stream/              TCP receiver and FFmpeg decoding
+    VirtualCamera/       Experimental DirectShow/shared-memory output and RTSP fallback code
+    MainForm.cs          WinForms UI and application coordination
+  SticamInstaller.iss    Inno Setup installer definition
+```
 
-### Directory Structure
-- **`android/`** - Kotlin & Jetpack Compose codebase (Sticam Node / Android Transmitter)
-  - `app/src/main/java/com/sticam/` - Core source code
-    - `engine/` - Audio/video capture pipeline (`CameraEngine.kt`, `RecordingSession.kt`)
-    - `server/` - Network streaming (`StreamServer.kt`)
-    - `ui/` - Compose-based layout and views
-      - `components/` - Custom reusable HUD items (`HudComponents.kt`, `HudSlider.kt`)
-      - `theme/` - Color palettes, typography, and styling configurations (`Theme.kt`)
-      - `SticamScreen.kt` - Main interactive HUD Compose view
-      - `SticamViewModel.kt` - State holder, lifecycle engine, and user actions handler
-- **`windows/`** - C# .NET 8 WinForms codebase (Sticam Host / Receiver)
-  - `SticamHost/` - Receiver application
-    - `Adb/` - ADB port-forwarding management
-    - `Stream/` - TCP video receiver and FFmpeg H.264 frame decoder
-    - `VirtualCamera/` - Virtual webcam driver output configuration (OBS VirtualCam/RTSP)
-    - `MainForm.cs` - Main UI, preview box, and log controls
-- **`ios/`** - SticamIOS Swift-based project (future placeholder or early iOS client)
-- **`sticam_media/`** - Artifacts/design assets and icon resources
+## Development Commands
 
----
+Run Android commands from `android/`:
 
-## 3. Jetpack Compose UI Architecture & Boundaries
+```powershell
+.\gradlew.bat assembleDebug --no-daemon
+.\gradlew.bat lintDebug --no-daemon
+.\gradlew.bat testDebugUnitTest --no-daemon
+.\gradlew.bat assembleRelease --no-daemon
+```
 
-To keep Compose codebases clean, maintainable, and high-performance, strictly adhere to the following design boundaries:
+`assembleRelease` uses the debug key when `keystore.properties` is missing. Never distribute that fallback build as an official release.
 
-### State Management & Unidirectional Data Flow (UDF)
-- **State flows DOWN, Events flow UP**:
-  - Keep state read operations as close as possible to where they are used.
-  - Composables must not directly mutate state variables. Mutate state exclusively through event callbacks passed up to the ViewModel.
-- **ViewModel Injection Limits**:
-  - **Do NOT** pass ViewModels into low-level/leaf composables. 
-  - ViewModels should only be injected at the **screen root** (e.g., `SticamScreen(vm)`).
-  - Child composables must receive primitive parameters (or simple UI state data classes) and lambda callback events (e.g., `onValueChange: (Float) -> Unit`).
-- **Lifecycle-Aware Collection**:
-  - Collect StateFlows using `collectAsStateWithLifecycle()` from `androidx.lifecycle:lifecycle-runtime-compose` instead of plain `collectAsState()` to save device resources when the application is backgrounded.
+Run Windows commands from `windows/SticamHost/`:
 
-### UI State Immutability
-- Define UI state in a single, read-only data class (e.g., `SticamUiState`).
-- Use `copy()` to emit new states.
-- Avoid exposing mutable collections (like `MutableList`) directly. Use Kotlin read-only `List` types, and update them using state emission.
+```powershell
+dotnet restore
+dotnet build -c Release
+dotnet publish -c Release -r win-x64 --self-contained -o publish
+```
 
-### Styling & Theme Consistency
-- **No Hardcoded Style Values**: Do not use ad-hoc hex values (like `Color(0xFF00FF41)`) directly inside layout components. Always reference them via `MaterialTheme.colorScheme` or custom theme files (e.g. `com.sticam.ui.theme`).
-- **Responsive Sizing**: Use `Modifier.weight()` and layout boxes with constraints for dynamic aspect ratios rather than hardcoded dimensions wherever possible.
-- **TextureView/SurfaceTransforms**: When interfacing with legacy native components (like `TextureView` for Camera2), use `AndroidView` wrapper and apply mathematical matrix transforms (`Matrix.ScaleToFit.FILL`) to maintain unstretched aspect ratios.
+The repository currently has no committed automated test suites. Add focused tests when practical, especially for protocol framing, state transitions, and conversion code.
 
-### Compose Performance & Recomposition Boundaries
-- **Use `remember`**: Cache expensive calculations, state, and matrices inside composables using `remember` block.
-- **Key Lists**: When using `LazyColumn` or custom iterations, always supply a `key` parameter to allow Compose to optimize item updates and avoid redrawing the entire list.
-- **derivedStateOf**: Use `derivedStateOf` when calculating helper state variables based on other states to avoid redundant recompositions during high-frequency changes (e.g., scroll positions, high-frequency sliders).
+## Editing Rules
 
----
+- Make minimal, focused changes and preserve unrelated work.
+- Do not reformat whole files for a small change.
+- Do not commit build output, signing keys, credentials, or machine-specific configuration.
+- Do not replace bundled models, fonts, DLLs, ADB, or FFmpeg binaries without recording the exact version, source URL, license, and checksum in `THIRD_PARTY_NOTICES.md`.
+- Update README, SECURITY, CONTRIBUTING, and third-party notices when behavior or distribution changes.
+- Keep the names **STICam**, **STICam Host**, **Android transmitter**, and **Windows listener** consistent.
 
-## 4. Coding & Quality Rules
+## Android Rules
 
-### Kotlin Rules
-- **No Null Assertions**: NEVER use `!!` (double exclamation marks). If a value can be null, handle it gracefully using safe calls (`?.`), the elvis operator (`?:`), or `let`.
-- **Exception Safety**: Use `runCatching { ... }` or explicit `try-catch` blocks around system service APIs (like `CameraManager`, `MediaCodec`, and network operations).
-- **Concurrency & Threads**:
-  - Never run blocking I/O operations (file writes, network packets transmission) on the Android main thread.
-  - Dispatch blocking work using Kotlin Coroutines bound to `Dispatchers.IO`. Use `viewModelScope` to automatically cancel tasks when the UI is destroyed.
-- **Logging**: Use descriptive tags with `Log.d`, `Log.w`, or `Log.e`. Clean up diagnostic debug logs before submitting code edits.
+- Keep UI state in immutable data classes exposed through `StateFlow`.
+- Collect flows with `collectAsStateWithLifecycle()`.
+- Pass values and event callbacks to leaf composables; do not pass the ViewModel deep into the UI tree.
+- Never perform blocking camera, codec, network, or file work on the main thread.
+- Serialize camera/session restarts and propagate asynchronous Camera2 and MediaCodec failures to UI state.
+- Do not introduce new `!!` assertions unless a documented invariant makes null impossible.
+- Handle Camera2, MediaCodec, MediaMuxer, network, and OpenGL failures explicitly.
+- Respect device-reported camera, encoder, frame-rate, ISO, zoom, focus, and stream-combination capabilities.
+- Handle `YUV_420_888` row and pixel strides correctly.
+- Release Camera2, MediaCodec, ImageReader, Surface, MediaPipe, thread, and EGL resources idempotently.
 
-### C# / .NET Rules
-- **Resource Cleanup**: Always implement `IDisposable` on native resource wrappers (FFmpeg context, process streams, TCP sockets). Use `using` statements for auto-cleanup.
-- **UI Thread Safety**: Never invoke UI controls directly from network or decoder threads. Use `Invoke` or `BeginInvoke` on the Form control when updating UI state from background tasks.
-- **Native Interops**: Wrap Win32 and system P/Invoke signatures in safe wrapper classes (e.g. `MfNative`).
+## Windows Rules
 
----
+- Dispose `Bitmap`, socket, process, FFmpeg, registry, memory-mapped, and native resources deterministically.
+- Never update WinForms controls from worker threads without `Invoke` or `BeginInvoke`.
+- Bound frame and command queues; prefer the newest frame when latency matters.
+- Keep FFmpeg packet padding and native buffer-size requirements intact.
+- Validate even frame dimensions before NV12 conversion.
+- Never report a virtual camera as active until registration and output readiness are verified.
+- Do not overwrite another application's COM registration or shared-memory producer without explicit compatibility and ownership checks.
 
-## 5. Editing Hygiene
+## Streaming Protocol
 
-- **Minimal Diffs**: Restrict code edits only to the semantic changes required to implement a feature or resolve a bug.
-- **Formatting**: Do not reformat entire files. Maintain the formatting, brackets, spacing, and styling conventions of the existing file you are editing.
-- **Retain Comments**: Do not remove existing comments, docstrings, or warnings unless they are directly invalidated by the changes you are introducing.
+The protocol is shared by `StreamServer.kt` and `H264Receiver.cs`:
+
+```text
+[1-byte type][4-byte big-endian length][payload]
+
+0x00  H.264 frame
+0x01  SPS
+0x02  PPS
+0x10  UTF-8 JSON command
+```
+
+Any protocol change must:
+
+- update both Android and Windows in the same pull request;
+- preserve strict payload limits and reject malformed packets;
+- document compatibility or add protocol version negotiation;
+- include tests for partial reads, invalid lengths, reconnects, and configuration changes;
+- update README or SECURITY when user-visible behavior or risk changes.
+
+## Verification Before Submission
+
+- Run `git diff --check`.
+- Build every changed platform.
+- Run Android lint for Android changes.
+- Run relevant automated tests when present.
+- Manually verify both Wi-Fi and USB when networking changes.
+- Manually verify preview, reconnect, orientation, camera switching, and virtual-camera status when those paths change.
+- Confirm documentation matches committed behavior and does not promise inaccessible features.
+- Confirm the project remains GPL-3.0 and third-party notices remain complete.
