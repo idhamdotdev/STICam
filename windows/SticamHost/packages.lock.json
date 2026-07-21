@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net8.0-windows7.0": {
+      "Sdcb.FFmpeg": {
+        "type": "Direct",
+        "requested": "[7.0.0, )",
+        "resolved": "7.0.0",
+        "contentHash": "QRSDsxdA1ow1Ec7jfFnZl490ytdxulRZLh6/PkYd5SjsVa84gE1GMnSup6D8KrEjmBHtHlIPGz3BZQgd19KPTQ=="
+      },
+      "Sdcb.FFmpeg.runtime.windows-x64": {
+        "type": "Direct",
+        "requested": "[7.0.0, )",
+        "resolved": "7.0.0",
+        "contentHash": "UxFwCdHSI5m4ygTpP18Z0EF0QzxGY1jpCWm7FqT5rTa4Ymuu/v8RMZz0BNRFABpuq+GYnCa1NWsM7Ep2oy6qjA=="
+      }
+    }
+  }
+}

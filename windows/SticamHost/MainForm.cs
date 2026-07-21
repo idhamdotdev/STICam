@@ -6,6 +6,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using System.Text.Json;
 using SticamHost.Adb;
+using SticamHost.Security;
 using SticamHost.Stream;
 using SticamHost.VirtualCamera;
 
@@ -39,7 +40,11 @@ namespace SticamHost
         private readonly TextBox      _tbIp;
         private readonly Label        _lblIpPrefix;
         private readonly Panel        _ipPanel;
+        private readonly Panel        _pairingPanel;
+        private readonly TextBox      _tbPairingKey;
+        private string                _pairingKey;
         private readonly Button       _btnConnect;
+        private readonly Label        _lblStatus;
 
         // ── LIVE-state controls ──────────────────────────────────────────────
         private readonly Panel        _liveContainer;
@@ -93,6 +98,12 @@ namespace SticamHost
         private bool _cinemaMode;
         private bool _isSyncing;
         private int _currentRotation = 0;
+        private long _sessionId;
+        private long _lastStatsFrames;
+        private long _lastStatsBytes;
+        private readonly object _previewLock = new();
+        private Bitmap? _pendingPreviewFrame;
+        private int _previewInvokePending;
         private FormBorderStyle _prevBorderStyle;
         private FormWindowState _prevWindowState;
         private Rectangle _prevBounds;
@@ -105,10 +116,25 @@ namespace SticamHost
 
             // Load Lalezar font
             LoadLalezarFont();
+            try
+            {
+                _pairingKey = PairingKeyStore.GetOrCreate();
+            }
+            catch (Exception ex)
+            {
+                var rotate = MessageBox.Show(
+                    $"The saved pairing key could not be opened:\n\n{ex.Message}\n\n" +
+                    "Rotate it now? Previously paired phones will need the new key.",
+                    "Pairing Key Recovery",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (rotate != DialogResult.Yes) throw;
+                _pairingKey = PairingKeyStore.Rotate();
+            }
 
             Text          = "STICam";
-            Size          = new Size(720, 580);
-            MinimumSize   = new Size(540, 480);
+            Size          = new Size(720, 650);
+            MinimumSize   = new Size(540, 560);
             BackColor     = NavyDark;
             Font          = MakeFont(10f);
             StartPosition = FormStartPosition.CenterScreen;
@@ -159,7 +185,8 @@ namespace SticamHost
                     "Please make sure that :\n" +
                     "*STICam app is running on your Android phone\n" +
                     "*For USB Mode : USB Debugging is enabled\n" +
-                    "*For Wi-Fi mode: both devices on the same network",
+                    "*Copy the pairing key below into the Android app\n" +
+                    "*For Wi-Fi mode: both devices are on the same network",
                 ForeColor = TextWhite,
                 Font      = MakeFont(10f, FontStyle.Bold),
                 AutoSize  = false,
@@ -217,6 +244,61 @@ namespace SticamHost
             _ipPanel.Controls.Add(_lblIpPrefix);
             _ipPanel.Controls.Add(_tbIp);
 
+            _pairingPanel = new Panel
+            {
+                Location = new Point(70, 410),
+                Size = new Size(610, 40),
+                BackColor = Color.Black,
+            };
+            _pairingPanel.Paint += (_, e) =>
+            {
+                float scale = (float)this.DeviceDpi / 96f;
+                using var pen = new Pen(Color.FromArgb(200, 200, 200), 2 * scale);
+                e.Graphics.DrawRectangle(pen, 0, 0, _pairingPanel.Width - 1, _pairingPanel.Height - 1);
+            };
+            var pairingLabel = new Label
+            {
+                Text = "PAIR KEY:",
+                ForeColor = TextWhite,
+                Font = MakeFont(10f, FontStyle.Bold),
+                Location = new Point(10, 9),
+                AutoSize = true,
+                BackColor = Color.Transparent,
+            };
+            _tbPairingKey = new TextBox
+            {
+                Text = _pairingKey,
+                Location = new Point(100, 9),
+                Size = new Size(270, 25),
+                Font = new Font(FontFamily.GenericMonospace, 9f),
+                ForeColor = TealAccent,
+                BackColor = Color.Black,
+                BorderStyle = BorderStyle.None,
+                ReadOnly = true,
+            };
+            var copyPairingKey = new Button
+            {
+                Text = "COPY",
+                Location = new Point(380, 5),
+                Size = new Size(70, 30),
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = TextWhite,
+                BackColor = NavyMid,
+            };
+            var rotatePairingKey = new Button
+            {
+                Text = "ROTATE KEY",
+                Location = new Point(455, 5),
+                Size = new Size(145, 30),
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = TextWhite,
+                BackColor = NavyMid,
+            };
+            _pairingPanel.Controls.Add(pairingLabel);
+            _pairingPanel.Controls.Add(_tbPairingKey);
+            _pairingPanel.Controls.Add(copyPairingKey);
+            _pairingPanel.Controls.Add(rotatePairingKey);
+
             _rbWifi.CheckedChanged += (_, _) => _ipPanel.Visible = _rbWifi.Checked;
 
             // ── CONNECT button ───────────────────────────────────────
@@ -224,7 +306,7 @@ namespace SticamHost
             {
                 Text      = "CONNECT",
                 Size      = new Size(190, 60),
-                Location  = new Point(490, 435),
+                Location  = new Point(490, 515),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = TealAccent,
                 ForeColor = TextWhite,
@@ -236,8 +318,57 @@ namespace SticamHost
             _btnConnect.FlatAppearance.MouseOverBackColor = Color.FromArgb(40, 224, 165);
             _btnConnect.Click += OnConnect;
 
+            _lblStatus = new Label
+            {
+                Text = "Ready",
+                ForeColor = TextDim,
+                Font = MakeFont(9f),
+                Location = new Point(30, 500),
+                Size = new Size(440, 70),
+                BackColor = Color.Transparent,
+            };
+            copyPairingKey.Click += (_, _) =>
+            {
+                try
+                {
+                    Clipboard.SetText(_pairingKey);
+                    _lblStatus.Text = "Pairing key copied. Paste it into the Android app.";
+                }
+                catch (Exception ex)
+                {
+                    _lblStatus.Text = $"Could not copy pairing key: {ex.Message}";
+                }
+            };
+            rotatePairingKey.Click += (_, _) =>
+            {
+                if (_receiver != null)
+                {
+                    _lblStatus.Text = "Disconnect before rotating the pairing key.";
+                    return;
+                }
+                var confirm = MessageBox.Show(
+                    this,
+                    "Rotate the pairing key? The Android app must be updated with the new key.",
+                    "Rotate Pairing Key",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Warning);
+                if (confirm != DialogResult.Yes) return;
+                try
+                {
+                    _pairingKey = PairingKeyStore.Rotate();
+                    _tbPairingKey.Text = _pairingKey;
+                    _lblStatus.Text = "Pairing key rotated. Copy the new key to Android.";
+                }
+                catch (Exception ex)
+                {
+                    _lblStatus.Text = $"Could not rotate pairing key: {ex.Message}";
+                }
+            };
+
             // Wire idle controls
+            _idleContainer.Controls.Add(_lblStatus);
             _idleContainer.Controls.Add(_btnConnect);
+            _idleContainer.Controls.Add(_pairingPanel);
             _idleContainer.Controls.Add(_ipPanel);
             _idleContainer.Controls.Add(_rbWifi);
             _idleContainer.Controls.Add(_rbUsb);
@@ -423,18 +554,6 @@ namespace SticamHost
                 Checked = true
             };
             _chkAutoIso.FlatAppearance.CheckedBackColor = TealAccent;
-            _chkAutoIso.CheckedChanged += (s, e) =>
-            {
-                if (_isSyncing) return;
-                if (_chkAutoIso.Checked) {
-                    _sliderIso.ValueText = "AUTO";
-                    _receiver?.SendCameraControl(iso: -1, brightness: null, focus: null);
-                } else {
-                    int val = (int)_sliderIso.Value;
-                    _sliderIso.ValueText = $"{val}";
-                    _receiver?.SendCameraControl(iso: val, brightness: null, focus: null);
-                }
-            };
             _panelControls.Controls.Add(_chkAutoIso);
             yOffset += 30; // Shorter spacing for checkbox
 
@@ -466,6 +585,18 @@ namespace SticamHost
                 _sliderIso.ValueText = $"{val}";
                 _receiver?.SendCameraControl(iso: val, brightness: null, focus: null);
             };
+            _chkAutoIso.CheckedChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                if (_chkAutoIso.Checked) {
+                    _sliderIso.ValueText = "AUTO";
+                    _receiver?.SendCameraControl(iso: -1, brightness: null, focus: null);
+                } else {
+                    int val = (int)_sliderIso.Value;
+                    _sliderIso.ValueText = $"{val}";
+                    _receiver?.SendCameraControl(iso: val, brightness: null, focus: null);
+                }
+            };
             _panelControls.Controls.Add(_sliderIso);
             yOffset += spacing;
 
@@ -483,17 +614,6 @@ namespace SticamHost
                 Checked = true
             };
             _chkAutoFocus.FlatAppearance.CheckedBackColor = TealAccent;
-            _chkAutoFocus.CheckedChanged += (s, e) =>
-            {
-                if (_isSyncing) return;
-                if (_chkAutoFocus.Checked) {
-                    _sliderFocus.ValueText = "AUTO";
-                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: -1f);
-                } else {
-                    _sliderFocus.ValueText = $"{_sliderFocus.Value:F2}";
-                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: _sliderFocus.Value);
-                }
-            };
             _panelControls.Controls.Add(_chkAutoFocus);
             yOffset += 30; // Shorter spacing for checkbox
 
@@ -520,6 +640,17 @@ namespace SticamHost
                 }
                 _sliderFocus.ValueText = $"{_sliderFocus.Value:F2}";
                 _receiver?.SendCameraControl(iso: null, brightness: null, focus: _sliderFocus.Value);
+            };
+            _chkAutoFocus.CheckedChanged += (s, e) =>
+            {
+                if (_isSyncing) return;
+                if (_chkAutoFocus.Checked) {
+                    _sliderFocus.ValueText = "AUTO";
+                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: -1f);
+                } else {
+                    _sliderFocus.ValueText = $"{_sliderFocus.Value:F2}";
+                    _receiver?.SendCameraControl(iso: null, brightness: null, focus: _sliderFocus.Value);
+                }
             };
             _panelControls.Controls.Add(_sliderFocus);
 
@@ -603,7 +734,7 @@ namespace SticamHost
             _cbResolution.SelectedIndexChanged += (s, e) =>
             {
                 if (_isSyncing) return;
-                string selectedRes = _cbResolution.SelectedItem?.ToString();
+                string? selectedRes = _cbResolution.SelectedItem?.ToString();
                 if (!string.IsNullOrEmpty(selectedRes))
                 {
                     _receiver?.SendCameraControl(iso: null, brightness: null, focus: null, zoom: null, flash: null, cameraId: null, resolution: selectedRes);
@@ -634,15 +765,14 @@ namespace SticamHost
 
             // Stats timer
             _statsTimer = new System.Windows.Forms.Timer { Interval = 1000 };
-            long lastF = 0, lastB = 0;
             _statsTimer.Tick += (_, _) =>
             {
                 var r = _receiver;
                 if (r == null) { _lblLiveStats.Text = ""; return; }
-                long dF = r.FramesReceived - lastF;
-                long dB = r.BytesReceived  - lastB;
-                lastF = r.FramesReceived;
-                lastB = r.BytesReceived;
+                long dF = Math.Max(0, r.FramesReceived - _lastStatsFrames);
+                long dB = Math.Max(0, r.BytesReceived - _lastStatsBytes);
+                _lastStatsFrames = r.FramesReceived;
+                _lastStatsBytes = r.BytesReceived;
                 _lblLiveStats.Text = $"{dF} fps  •  {dB / 1024.0 / 1024.0:F1} MB/s";
                 PositionOverlays(null, EventArgs.Empty);
             };
@@ -657,7 +787,7 @@ namespace SticamHost
 
         private void LoadLalezarFont()
         {
-            string fontPath = Path.Combine(Path.GetTempPath(), "STICamHost", "fonts", "Lalezar-Regular.ttf");
+            string fontPath = Path.Combine(RuntimePaths.FontsDirectory, "Lalezar-Regular.ttf");
             if (!File.Exists(fontPath))
                 fontPath = Path.Combine(AppContext.BaseDirectory, "fonts", "Lalezar-Regular.ttf");
             if (!File.Exists(fontPath))
@@ -786,6 +916,11 @@ namespace SticamHost
 
         private void ShowIdleMode()
         {
+            lock (_previewLock)
+            {
+                _pendingPreviewFrame?.Dispose();
+                _pendingPreviewFrame = null;
+            }
             HideMenuPopup();
             if (_panelControls != null) _panelControls.Visible = false;
             _liveContainer.Visible = false;
@@ -799,11 +934,107 @@ namespace SticamHost
             MaximizeBox = false;
 
             float scale = (float)this.DeviceDpi / 96f;
-            Size = new Size((int)(720 * scale), (int)(580 * scale));
+            Size = new Size((int)(720 * scale), (int)(650 * scale));
             UpdateTrayMenuItems();
         }
 
         // ── Connect / Disconnect ─────────────────────────────────────────────
+
+        private void ReportBackendLog(string message)
+        {
+            System.Diagnostics.Trace.WriteLine(message);
+            if (IsDisposed || !IsHandleCreated) return;
+            void UpdateStatus()
+            {
+                if (IsDisposed) return;
+                _lblStatus.Text = message;
+                if (message.Contains("fail", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                    message.Contains("not found", StringComparison.OrdinalIgnoreCase))
+                {
+                    _lblStatus.ForeColor = Color.FromArgb(240, 120, 100);
+                    _menuVcamStatus.Text = message;
+                }
+                else
+                {
+                    _lblStatus.ForeColor = TextDim;
+                }
+            }
+            if (InvokeRequired) BeginInvoke((Action)UpdateStatus);
+            else UpdateStatus();
+        }
+
+        private void QueuePreviewFrame(Bitmap source, long sessionId, string modeLabel)
+        {
+            if (sessionId != System.Threading.Interlocked.Read(ref _sessionId) || IsDisposed) return;
+            Bitmap clone;
+            if (_currentRotation == 90 || _currentRotation == 270)
+            {
+                int cropWidth = Math.Min(source.Width, (source.Height * source.Height) / source.Width) & ~1;
+                cropWidth = Math.Max(2, cropWidth);
+                int cropX = (source.Width - cropWidth) / 2;
+                clone = source.Clone(new Rectangle(cropX, 0, cropWidth, source.Height), source.PixelFormat);
+            }
+            else
+            {
+                clone = (Bitmap)source.Clone();
+            }
+
+            lock (_previewLock)
+            {
+                _pendingPreviewFrame?.Dispose();
+                _pendingPreviewFrame = clone;
+            }
+            if (System.Threading.Interlocked.Exchange(ref _previewInvokePending, 1) == 0)
+            {
+                try { BeginInvoke((Action)(() => PresentPendingPreview(sessionId, modeLabel))); }
+                catch
+                {
+                    lock (_previewLock)
+                    {
+                        _pendingPreviewFrame?.Dispose();
+                        _pendingPreviewFrame = null;
+                    }
+                    System.Threading.Interlocked.Exchange(ref _previewInvokePending, 0);
+                }
+            }
+        }
+
+        private void PresentPendingPreview(long sessionId, string modeLabel)
+        {
+            Bitmap? next;
+            lock (_previewLock)
+            {
+                next = _pendingPreviewFrame;
+                _pendingPreviewFrame = null;
+            }
+
+            if (next != null)
+            {
+                if (sessionId != System.Threading.Interlocked.Read(ref _sessionId) || IsDisposed)
+                    next.Dispose();
+                else
+                {
+                    var old = _videoPb.Image;
+                    _videoPb.Image = next;
+                    old?.Dispose();
+                    if (!_liveContainer.Visible)
+                    {
+                        ShowLiveMode($"Android Phone {modeLabel}");
+                        if (_chkVirtualCam.Checked) StartVirtualCam();
+                        UpdateMenuVcamButton();
+                    }
+                }
+            }
+
+            System.Threading.Interlocked.Exchange(ref _previewInvokePending, 0);
+            lock (_previewLock)
+            {
+                if (_pendingPreviewFrame != null &&
+                    System.Threading.Interlocked.Exchange(ref _previewInvokePending, 1) == 0)
+                    BeginInvoke((Action)(() => PresentPendingPreview(sessionId, modeLabel)));
+            }
+        }
 
         private void OnConnect(object? s, EventArgs e)
         {
@@ -812,6 +1043,12 @@ namespace SticamHost
                 OnDisconnect(null, EventArgs.Empty);
                 return;
             }
+
+            long sessionId = System.Threading.Interlocked.Increment(ref _sessionId);
+            int hasEverConnected = 0;
+            _lastStatsFrames = 0;
+            _lastStatsBytes = 0;
+            _lblStatus.Text = "Starting receiver...";
 
             _faceTrackingActive = false;
             UpdateMenuFaceTrackingButton();
@@ -823,64 +1060,28 @@ namespace SticamHost
             if (isUsb)
             {
                 _adb = new AdbForwarder();
-                _adb.OnLog += _ => { };
+                _adb.OnLog += ReportBackendLog;
                 _adb.Start();
             }
 
             _decoder = new VideoDecoder();
             _decoder.MirrorX = _mirrorVideo;
-            _decoder.OnLog += _ => { };
+            _decoder.OnLog += ReportBackendLog;
             _decoder.OnFrameDecoded += bmp =>
             {
-                if (IsDisposed || !IsHandleCreated) return;
-
-                Bitmap clone;
-                lock (bmp)
-                {
-                    if (_currentRotation == 90 || _currentRotation == 270)
-                    {
-                        int cropW = (bmp.Height * bmp.Height) / bmp.Width;
-                        if (cropW > bmp.Width) cropW = bmp.Width;
-                        int cropX = (bmp.Width - cropW) / 2;
-                        var cropRect = new Rectangle(cropX, 0, cropW, bmp.Height);
-                        clone = bmp.Clone(cropRect, bmp.PixelFormat);
-                    }
-                    else
-                    {
-                        clone = (Bitmap)bmp.Clone();
-                    }
-                }
-
-                BeginInvoke(() =>
-                {
-                    if (IsDisposed)
-                    {
-                        clone.Dispose();
-                        return;
-                    }
-                    var old = _videoPb.Image;
-                    _videoPb.Image = clone;
-                    old?.Dispose();
-                    if (!_liveContainer.Visible)
-                    {
-                        ShowLiveMode($"Android Phone {modeLabel}");
-                        if (_chkVirtualCam.Checked)
-                        {
-                            StartVirtualCam();
-                            UpdateMenuVcamButton();
-                        }
-                    }
-                });
+                QueuePreviewFrame(bmp, sessionId, modeLabel);
             };
 
-            _receiver = new H264Receiver(host, 8765);
-            _receiver.OnLog += _ => { };
+            _receiver = new H264Receiver(host, _pairingKey, 8765);
+            var receiver = _receiver;
+            var decoder = _decoder;
+            receiver.OnLog += ReportBackendLog;
             _receiver.OnCommandReceived += cmdJson =>
             {
-                if (IsDisposed || !IsHandleCreated) return;
+                if (sessionId != System.Threading.Interlocked.Read(ref _sessionId) || IsDisposed || !IsHandleCreated) return;
                 BeginInvoke(() =>
                 {
-                    if (IsDisposed) return;
+                    if (sessionId != System.Threading.Interlocked.Read(ref _sessionId) || IsDisposed) return;
                     try
                     {
                     using var doc = JsonDocument.Parse(cmdJson);
@@ -1034,36 +1235,46 @@ namespace SticamHost
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex) { ReportBackendLog($"[Control] Invalid command: {ex.Message}"); }
                 });
             };
-            _receiver.OnConnectionChanged += ok =>
+            receiver.OnConnectionChanged += ok =>
             {
-                if (IsDisposed || !IsHandleCreated) return;
+                if (sessionId != System.Threading.Interlocked.Read(ref _sessionId) || IsDisposed || !IsHandleCreated) return;
+                if (ok) System.Threading.Interlocked.Exchange(ref hasEverConnected, 1);
                 BeginInvoke(() =>
                 {
-                    if (IsDisposed) return;
+                    if (sessionId != System.Threading.Interlocked.Read(ref _sessionId) || IsDisposed) return;
                     if (!ok)
-                {
-                    ShowIdleMode();
-                    _btnConnect.Text = "CONNECT";
-                    _btnConnect.BackColor = TealAccent;
-                    _receiver?.Disconnect(); _receiver = null;
-                    _decoder?.Stop();        _decoder  = null;
-                    _adb?.Stop();            _adb      = null;
-                }
-                else if (ok && !_liveContainer.Visible)
-                {
-                    _btnConnect.Text = "CONNECTED";
-                    _btnConnect.BackColor = Color.FromArgb(50, 180, 130);
-                }
-                UpdateTrayMenuItems();
+                    {
+                        StopVirtualCam();
+                        ShowIdleMode();
+                        _btnConnect.Text = "RECONNECTING...";
+                        _btnConnect.BackColor = Color.FromArgb(50, 130, 180);
+                        _lblStatus.Text = "Connection lost; waiting for the phone to reconnect...";
+                    }
+                    else if (!_liveContainer.Visible)
+                    {
+                        _btnConnect.Text = "CONNECTED";
+                        _btnConnect.BackColor = Color.FromArgb(50, 180, 130);
+                        _lblStatus.Text = "Phone connected; waiting for video configuration...";
+                    }
+                    UpdateTrayMenuItems();
                 });
             };
-            _receiver.OnConfigReceived += (sps, pps) => _decoder.Start(sps, pps);
-            _receiver.OnFrameReceived  += (_, args)  => _decoder.PushFrame(args.Data);
+            receiver.OnConfigReceived += (sps, pps) =>
+            {
+                if (sessionId == System.Threading.Interlocked.Read(ref _sessionId))
+                    decoder.Start(sps, pps);
+            };
+            receiver.OnFrameReceived += (_, args) =>
+            {
+                if (sessionId == System.Threading.Interlocked.Read(ref _sessionId))
+                    decoder.PushFrame(args.Data, args.IsKeyFrame);
+            };
+            decoder.OnKeyFrameNeeded += receiver.RequestKeyFrame;
 
-            _receiver.Connect();
+            receiver.Connect();
             _btnConnect.Text = "WAITING...";
             _btnConnect.BackColor = Color.FromArgb(50, 130, 180);
             UpdateTrayMenuItems();
@@ -1077,7 +1288,8 @@ namespace SticamHost
                 BeginInvoke(() =>
                 {
                     if (IsDisposed) return;
-                    if (_receiver == currentReceiver && !_liveContainer.Visible)
+                    if (_receiver == currentReceiver &&
+                        System.Threading.Interlocked.CompareExchange(ref hasEverConnected, 0, 0) == 0)
                     {
                         OnDisconnect(null, EventArgs.Empty);
                         MessageBox.Show(this, 
@@ -1093,10 +1305,17 @@ namespace SticamHost
 
         private void OnDisconnect(object? s, EventArgs e)
         {
+            System.Threading.Interlocked.Increment(ref _sessionId);
             StopVirtualCam();
-            _receiver?.Disconnect(); _receiver = null;
-            _decoder?.Stop();        _decoder  = null;
-            _adb?.Stop();            _adb      = null;
+            var receiver = _receiver;
+            var decoder = _decoder;
+            var adb = _adb;
+            _receiver = null;
+            _decoder = null;
+            _adb = null;
+            receiver?.Dispose();
+            decoder?.Dispose();
+            adb?.Dispose();
 
             _faceTrackingActive = false;
             UpdateMenuFaceTrackingButton();
@@ -1105,6 +1324,7 @@ namespace SticamHost
             _lblLiveStats.Text     = "";
             _btnConnect.Text       = "CONNECT";
             _btnConnect.BackColor  = TealAccent;
+            _lblStatus.Text        = "Disconnected";
 
             ShowIdleMode();
             UpdateTrayMenuItems();
@@ -1128,22 +1348,45 @@ namespace SticamHost
         private void StartVirtualCam()
         {
             if (_vcamActive || _decoder == null) return;
-            int w = _videoPb.Image?.Width  ?? 1280;
-            int h = _videoPb.Image?.Height ?? 720;
-            _vcam = new VirtualCameraManager(w, h, fps: 30);
-            _vcam.OnLog += _ => { };
-            _decoder.OnFrameDecoded += OnVcamFrameDecoded;
-            string result = _vcam.Start();
-            _vcamActive = true;
+            int w = (_videoPb.Image?.Width ?? 1280) & ~1;
+            int h = (_videoPb.Image?.Height ?? 720) & ~1;
+            var manager = new VirtualCameraManager(w, h, fps: 30);
+            _vcam = manager;
+            manager.OnLog += ReportBackendLog;
+            manager.OnModeChanged += detail =>
+            {
+                if (manager.ActiveMode != VirtualCameraMode.None || IsDisposed || !IsHandleCreated) return;
+                BeginInvoke((Action)(() =>
+                {
+                    if (!ReferenceEquals(_vcam, manager)) return;
+                    if (_decoder != null) _decoder.OnFrameDecoded -= OnVcamFrameDecoded;
+                    manager.Dispose();
+                    _vcam = null;
+                    _vcamActive = false;
+                    _menuVcamStatus.Text = detail;
+                    UpdateMenuVcamButton();
+                }));
+            };
+            string result = manager.Start();
+            if (manager.ActiveMode != VirtualCameraMode.None)
+            {
+                _decoder.OnFrameDecoded += OnVcamFrameDecoded;
+                _vcamActive = true;
+            }
+            else
+            {
+                manager.Dispose();
+                _vcam = null;
+                _vcamActive = false;
+                ReportBackendLog(result);
+            }
             _menuVcamStatus.Text = result;
         }
 
         private void StopVirtualCam()
         {
-            if (!_vcamActive) return;
-            if (_decoder != null && _vcam != null)
-                _decoder.OnFrameDecoded -= OnVcamFrameDecoded;
-            _vcam?.Stop(); _vcam = null;
+            if (_decoder != null) _decoder.OnFrameDecoded -= OnVcamFrameDecoded;
+            _vcam?.Dispose(); _vcam = null;
             _vcamActive = false;
             _menuVcamStatus.Text = "";
         }
@@ -1227,22 +1470,23 @@ namespace SticamHost
 
         private void OnVcamFrameDecoded(Bitmap bmp)
         {
-            if (_vcam == null) return;
+            var manager = _vcam;
+            if (manager == null) return;
             
             if (_currentRotation == 90 || _currentRotation == 270) // Vertical mode, crop the frame!
             {
-                int cropW = (bmp.Height * bmp.Height) / bmp.Width;
-                if (cropW > bmp.Width) cropW = bmp.Width;
+                int cropW = Math.Min(bmp.Width, (bmp.Height * bmp.Height) / bmp.Width) & ~1;
+                cropW = Math.Max(2, cropW);
                 int cropX = (bmp.Width - cropW) / 2;
                 var cropRect = new Rectangle(cropX, 0, cropW, bmp.Height);
                 using (Bitmap cropped = bmp.Clone(cropRect, bmp.PixelFormat))
                 {
-                    _vcam.PushFrame(cropped);
+                    manager.PushFrame(cropped);
                 }
             }
             else
             {
-                _vcam.PushFrame(bmp);
+                manager.PushFrame(bmp);
             }
         }
 
@@ -1288,8 +1532,19 @@ namespace SticamHost
             _statsTimer.Stop();
             OnDisconnect(null, EventArgs.Empty);
             _notifyIcon.Dispose();
+            lock (_previewLock)
+            {
+                _pendingPreviewFrame?.Dispose();
+                _pendingPreviewFrame = null;
+            }
+            if (_currentTrayIcon != null)
+            {
+                IntPtr handle = _currentTrayIcon.Handle;
+                _currentTrayIcon.Dispose();
+                DestroyIcon(handle);
+                _currentTrayIcon = null;
+            }
             base.OnFormClosing(e);
-            Environment.Exit(0);
         }
 
         private static string GetLocalIpAddress()

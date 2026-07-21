@@ -66,4 +66,11 @@ class MainActivity : ComponentActivity() {
         vm.stopStreaming()
         super.onDestroy()
     }
+
+    override fun onStop() {
+        // Streaming is Activity-scoped. A foreground camera service is not
+        // implemented, so release camera/network resources when backgrounded.
+        vm.stopStreaming()
+        super.onStop()
+    }
 }

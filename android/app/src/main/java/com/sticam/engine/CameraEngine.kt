@@ -53,6 +53,7 @@ class CameraEngine(private val context: Context) {
     private var camDevice: CameraDevice? = null
     private var session: CameraCaptureSession? = null
     private var reqBuilder: CaptureRequest.Builder? = null
+    private val cameraGeneration = java.util.concurrent.atomic.AtomicLong(0)
 
     private var encoder: MediaCodec? = null
     private var encSurface: Surface? = null
@@ -74,34 +75,16 @@ class CameraEngine(private val context: Context) {
 
     var activeLutFilter: String = "None"
         set(value) {
-            val wasZeroCopy = isZeroCopyPath(field, activeArFilter)
             field = value
-            val isZeroCopy = isZeroCopyPath(field, activeArFilter)
-            if (wasZeroCopy != isZeroCopy) {
-                // We need to re-create the session!
-                camHandler?.post {
-                    session?.close()
-                    session = null
-                    camDevice?.let { createSession(it, currentPreviewSurface) }
-                }
-            } else if (!isZeroCopy) {
-                // Just update the LUT!
+            if (!isZeroCopyPath(field, activeArFilter)) {
                 glRenderer?.setFilter(value)
             }
         }
 
     var activeArFilter: String = "None"
         set(value) {
-            val wasZeroCopy = isZeroCopyPath(activeLutFilter, field)
             field = value
-            val isZeroCopy = isZeroCopyPath(activeLutFilter, field)
-            if (wasZeroCopy != isZeroCopy) {
-                camHandler?.post {
-                    session?.close()
-                    session = null
-                    camDevice?.let { createSession(it, currentPreviewSurface) }
-                }
-            } else if (!isZeroCopy) {
+            if (!isZeroCopyPath(activeLutFilter, field)) {
                 glRenderer?.setArFilter(value)
             }
         }
@@ -253,7 +236,7 @@ class CameraEngine(private val context: Context) {
     }
 
     /** Receives encoded NAL data + buffer info from the encoder thread. */
-    var onEncodedData: ((data: ByteArray, info: MediaCodec.BufferInfo) -> Unit)? = null
+    @Volatile var onEncodedData: ((data: ByteArray, info: MediaCodec.BufferInfo) -> Unit)? = null
     var onCharacteristicsReady: (() -> Unit)? = null
 
 
@@ -271,6 +254,7 @@ class CameraEngine(private val context: Context) {
         width: Int = 1920, height: Int = 1080,
         fps: Int = 30, bitrateMbps: Int = 8
     ) {
+        val generation = cameraGeneration.incrementAndGet()
         Log.i(TAG, "Start: cam=$cameraId ${width}x${height}@${fps}fps")
         activePreviewSurface = previewSurface
 
@@ -313,31 +297,39 @@ class CameraEngine(private val context: Context) {
         */
 
         if (camThread == null) {
-            camThread = HandlerThread("SticamCam").also { it.start() }
-            camHandler = Handler(camThread!!.looper)
+            val thread = HandlerThread("SticamCam").also { it.start() }
+            camThread = thread
+            camHandler = Handler(thread.looper)
         }
         if (encThread == null) {
-            encThread = HandlerThread("SticamEnc").also { it.start() }
-            encHandler = Handler(encThread!!.looper)
+            val thread = HandlerThread("SticamEnc").also { it.start() }
+            encThread = thread
+            encHandler = Handler(thread.looper)
         }
         if (detectThread == null) {
-            detectThread = HandlerThread("SticamDetect").also { it.start() }
-            detectHandler = Handler(detectThread!!.looper)
+            val thread = HandlerThread("SticamDetect").also { it.start() }
+            detectThread = thread
+            detectHandler = Handler(thread.looper)
         }
 
         setupImageReader(chars, captureSize.width, captureSize.height)
         setupEncoder(captureSize.width, captureSize.height, fps, bitrateMbps * 1_000_000)
-        openCamera(cameraId, previewSurface)
+        openCamera(cameraId, previewSurface, generation)
     }
 
     fun stop(keepThreads: Boolean = false) {
+        cameraGeneration.incrementAndGet()
         activePreviewSurface = null
+        currentPreviewSurface = null
         orientationListener?.disable()
         orientationListener = null
+        camHandler?.removeCallbacks(faceTrackingUpdateRunnable)
 
         runCatching { session?.stopRepeating() }
         session?.close(); session = null
+        reqBuilder = null
         camDevice?.close(); camDevice = null
+        glRenderer?.release(); glRenderer = null
         encoder?.let { e ->
             runCatching { e.signalEndOfInputStream() }
             runCatching { e.stop() }
@@ -362,12 +354,18 @@ class CameraEngine(private val context: Context) {
 
     /** Pause camera output (stop repeating request) without tearing down the session. */
     fun pauseCapture() {
-        runCatching { session?.stopRepeating() }
-        Log.i(TAG, "Camera paused")
+        camHandler?.post {
+            runCatching { session?.stopRepeating() }
+            Log.i(TAG, "Camera paused")
+        }
     }
 
     /** Resume camera output after a pauseCapture() call. */
     fun resumeCapture() {
+        camHandler?.post { resumeCaptureOnCameraThread() }
+    }
+
+    private fun resumeCaptureOnCameraThread() {
         val s = session ?: return
         val b = reqBuilder ?: return
         runCatching { s.setRepeatingRequest(b.build(), captureCallback, camHandler) }
@@ -385,6 +383,10 @@ class CameraEngine(private val context: Context) {
     /** Set digital zoom ratio (1.0 = wide, maxZoom = full tele). Thread-safe. */
     fun setZoom(ratio: Float) {
         curZoom = ratio.coerceIn(1f, maxZoom)
+        camHandler?.post { applyCurrentZoomOnCameraThread() }
+    }
+
+    private fun applyCurrentZoomOnCameraThread() {
         val b = reqBuilder ?: return
         applyZoomRect(b)
         val s = session ?: return
@@ -426,7 +428,8 @@ class CameraEngine(private val context: Context) {
         c.get(SENSOR_INFO_ACTIVE_ARRAY_SIZE)?.let { sensorRect = it }
         c.get(SCALER_AVAILABLE_MAX_DIGITAL_ZOOM)?.let { maxZoom = it }
 
-        val map = c.get(SCALER_STREAM_CONFIGURATION_MAP)!!
+        val map = c.get(SCALER_STREAM_CONFIGURATION_MAP)
+            ?: throw IllegalStateException("Camera has no stream configuration map")
         val sizes = map.getOutputSizes(android.graphics.ImageFormat.PRIVATE)
         captureSize = sizes.filter { it.width <= maxW && it.height <= maxH }
             .maxByOrNull { it.width * it.height } ?: Size(1280, 720)
@@ -446,19 +449,33 @@ class CameraEngine(private val context: Context) {
     }
 
     @RequiresPermission(Manifest.permission.CAMERA)
-    private fun openCamera(id: String, preview: Surface?) {
+    private fun openCamera(id: String, preview: Surface?, generation: Long) {
         currentPreviewSurface = preview
         camMgr.openCamera(id, object : CameraDevice.StateCallback() {
             override fun onOpened(cam: CameraDevice) {
+                if (cameraGeneration.get() != generation) {
+                    cam.close()
+                    return
+                }
                 camDevice = cam
-                createSession(cam, preview)
+                createSession(cam, preview, generation)
             }
-            override fun onDisconnected(cam: CameraDevice) { cam.close(); camDevice = null }
-            override fun onError(cam: CameraDevice, err: Int) { cam.close(); camDevice = null }
+            override fun onDisconnected(cam: CameraDevice) {
+                cam.close()
+                if (camDevice === cam) camDevice = null
+            }
+            override fun onError(cam: CameraDevice, err: Int) {
+                cam.close()
+                if (camDevice === cam) camDevice = null
+            }
         }, camHandler)
     }
 
-    private fun createSession(cam: CameraDevice, preview: Surface?) {
+    private fun createSession(cam: CameraDevice, preview: Surface?, generation: Long) {
+        if (cameraGeneration.get() != generation || camDevice !== cam) {
+            cam.close()
+            return
+        }
         val outputs = mutableListOf<Surface>()
         
         // Clean up old GL renderer
@@ -475,6 +492,10 @@ class CameraEngine(private val context: Context) {
             
             cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(s: CameraCaptureSession) {
+                    if (cameraGeneration.get() != generation || camDevice !== cam) {
+                        s.close()
+                        return
+                    }
                     session = s
                     try {
                         startRepeating(s, preview, true)
@@ -483,6 +504,7 @@ class CameraEngine(private val context: Context) {
                     }
                 }
                 override fun onConfigureFailed(s: CameraCaptureSession) {
+                    s.close()
                     Log.e(TAG, "Session config failed")
                 }
             }, camHandler)
@@ -493,12 +515,19 @@ class CameraEngine(private val context: Context) {
                 val ch = captureSize.height
                 // encoderRotation = sensor orientation + user manual offset (for front camera)
                 // so the PC always receives an upright stream regardless of camera facing.
-                glRenderer = GlRenderer(preview, enc, cw, ch, outW, outH, encoderRotation, isFrontCamera) { glInputSurface ->
+                glRenderer = GlRenderer(preview, enc, cw, ch, outW, outH, encoderRotation, isFrontCamera) rendererReady@ { glInputSurface ->
+                    if (cameraGeneration.get() != generation || camDevice !== cam) {
+                        return@rendererReady
+                    }
                     glRenderer?.setFilter(activeLutFilter)
                     glRenderer?.setArFilter(activeArFilter)
                     outputs.add(glInputSurface)
                     cam.createCaptureSession(outputs, object : CameraCaptureSession.StateCallback() {
                         override fun onConfigured(s: CameraCaptureSession) {
+                            if (cameraGeneration.get() != generation || camDevice !== cam) {
+                                s.close()
+                                return
+                            }
                             session = s
                             glRenderer?.attachWindowSurfaces()
                             try {
@@ -508,6 +537,7 @@ class CameraEngine(private val context: Context) {
                             }
                         }
                         override fun onConfigureFailed(s: CameraCaptureSession) {
+                            s.close()
                             Log.e(TAG, "Session config failed")
                         }
                     }, camHandler)
@@ -520,7 +550,8 @@ class CameraEngine(private val context: Context) {
     @Volatile private var isFlashActive = false
 
     private fun startRepeating(s: CameraCaptureSession, previewOrGlSurface: Surface?, isZeroCopy: Boolean) {
-        val b = camDevice!!.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+        val device = camDevice ?: return
+        val b = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
             previewOrGlSurface?.let { addTarget(it) }
             if (isZeroCopy) {
                 encSurface?.let { addTarget(it) }
@@ -599,6 +630,10 @@ class CameraEngine(private val context: Context) {
 
     fun setFocusLock(locked: Boolean) {
         isFocusLocked = locked
+        camHandler?.post { applyFocusLockOnCameraThread(locked) }
+    }
+
+    private fun applyFocusLockOnCameraThread(locked: Boolean) {
         val s = session ?: return
         val b = reqBuilder ?: return
         
@@ -636,6 +671,10 @@ class CameraEngine(private val context: Context) {
 
     fun setFlashOn(on: Boolean) {
         isFlashActive = on
+        camHandler?.post { applyFlashOnCameraThread(on) }
+    }
+
+    private fun applyFlashOnCameraThread(on: Boolean) {
         val s = session ?: return
         val b = reqBuilder ?: return
         if (on) {
@@ -654,19 +693,26 @@ class CameraEngine(private val context: Context) {
 
         // Map -4..4 to minComp..maxComp
         val step = (maxComp - minComp) / 8f
-        val ev = (value * step).toInt().coerceIn(minComp, maxComp)
-        curExposure = ev
+         val ev = (value * step).toInt().coerceIn(minComp, maxComp)
+         curExposure = ev
+         camHandler?.post { applyExposureOnCameraThread(ev, value) }
+     }
 
-        val s = session ?: return
+     private fun applyExposureOnCameraThread(ev: Int, sourceValue: Float) {
+         val s = session ?: return
         val b = reqBuilder ?: return
         b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, ev)
         runCatching { s.setRepeatingRequest(b.build(), captureCallback, camHandler) }
-        Log.i(TAG, "Exposure compensation updated: $ev (mapped from $value)")
+         Log.i(TAG, "Exposure compensation updated: $ev (mapped from $sourceValue)")
      }
 
      fun setManualIso(iso: Int) {
-        manualIso = iso
-        val s = session ?: return
+         manualIso = iso
+         camHandler?.post { applyManualIsoOnCameraThread(iso) }
+     }
+
+     private fun applyManualIsoOnCameraThread(iso: Int) {
+         val s = session ?: return
         val b = reqBuilder ?: return
         if (iso > 0) {
             b.set(CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_OFF)
@@ -685,15 +731,18 @@ class CameraEngine(private val context: Context) {
      }
 
      fun setFocusDistance(value: Float) {
-        val s = session ?: return
+         manualFocusDistance = if (value > 0f) value * maxFocusDistance else 0f
+         camHandler?.post { applyFocusDistanceOnCameraThread(value) }
+     }
+
+     private fun applyFocusDistanceOnCameraThread(value: Float) {
+         val s = session ?: return
         val b = reqBuilder ?: return
         if (value > 0f) {
             val dist = value * maxFocusDistance
-            manualFocusDistance = dist
             b.set(CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
             b.set(LENS_FOCUS_DISTANCE, dist)
         } else {
-            manualFocusDistance = 0f
             b.set(CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO)
         }
         runCatching { s.setRepeatingRequest(b.build(), captureCallback, camHandler) }
@@ -701,6 +750,17 @@ class CameraEngine(private val context: Context) {
      }
 
     fun triggerTapToFocus(xNormalized: Float, yNormalized: Float, viewWidth: Int, viewHeight: Int) {
+        camHandler?.post {
+            triggerTapToFocusOnCameraThread(xNormalized, yNormalized, viewWidth, viewHeight)
+        }
+    }
+
+    private fun triggerTapToFocusOnCameraThread(
+        xNormalized: Float,
+        yNormalized: Float,
+        viewWidth: Int,
+        viewHeight: Int,
+    ) {
         val s = session ?: return
         val b = reqBuilder ?: return
         val rect = sensorRect ?: return
@@ -805,11 +865,12 @@ class CameraEngine(private val context: Context) {
             runCatching { setInteger(MediaFormat.KEY_PRIORITY, 0) } // Real-time priority
         }
 
-        var enc: MediaCodec
+        var enc: MediaCodec? = null
         try {
             enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
             enc.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         } catch (e: Exception) {
+            runCatching { enc?.release() }
             Log.w(TAG, "Failed to configure with High Profile Level $targetLevel, falling back to Baseline/VBR: ${e.message}")
             fmt.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileBaseline)
             fmt.setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel4)
@@ -817,10 +878,11 @@ class CameraEngine(private val context: Context) {
             enc = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
             enc.configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
         }
+        val configuredEncoder = enc ?: throw IllegalStateException("Unable to create H.264 encoder")
         
-        encSurface = enc.createInputSurface()
+        encSurface = configuredEncoder.createInputSurface()
 
-        enc.setCallback(object : MediaCodec.Callback() {
+        configuredEncoder.setCallback(object : MediaCodec.Callback() {
             override fun onOutputBufferAvailable(c: MediaCodec, i: Int, info: MediaCodec.BufferInfo) {
                 runCatching {
                     if (info.size <= 0) { c.releaseOutputBuffer(i, false); return }
@@ -828,7 +890,10 @@ class CameraEngine(private val context: Context) {
                     val data = ByteArray(info.size)
                     buf.position(info.offset); buf.limit(info.offset + info.size); buf.get(data)
                     c.releaseOutputBuffer(i, false)
-                    onEncodedData?.invoke(data, info)
+                    val ownedInfo = MediaCodec.BufferInfo().apply {
+                        set(0, info.size, info.presentationTimeUs, info.flags)
+                    }
+                    onEncodedData?.invoke(data, ownedInfo)
                 }
             }
             override fun onInputBufferAvailable(c: MediaCodec, i: Int) {} // Surface mode
@@ -840,13 +905,14 @@ class CameraEngine(private val context: Context) {
             }
         }, encHandler)
 
-        enc.start()
-        encoder = enc
-        Log.i(TAG, "Encoder: ${enc.name} ${w}x${h}@${fps}fps ${bitrate/1_000_000}Mbps")
+        configuredEncoder.start()
+        encoder = configuredEncoder
+        Log.i(TAG, "Encoder: ${configuredEncoder.name} ${w}x${h}@${fps}fps ${bitrate/1_000_000}Mbps")
     }
 
     private fun setupImageReader(chars: CameraCharacteristics, width: Int, height: Int) {
-        val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!
+        val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            ?: throw IllegalStateException("Camera has no stream configuration map")
         val yuvSizes = map.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)
         
         val targetRatio = width.toFloat() / height.toFloat()

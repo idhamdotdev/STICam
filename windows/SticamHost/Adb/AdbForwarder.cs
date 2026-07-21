@@ -1,107 +1,137 @@
 using System;
 using System.Diagnostics;
-using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace SticamHost.Adb
 {
     /// <summary>
-    /// Manages ADB port forwarding so the Windows host can reach the Sticam Node
-    /// over USB without the user opening a terminal.
-    ///
-    /// Runs: adb forward tcp:<hostPort> tcp:<devicePort>
-    ///
-    /// The bundled adb.exe is expected at: <appDir>\tools\adb.exe
-    /// Falls back to adb.exe on system PATH if not found locally.
+    /// Maintains an ADB reverse rule so the Android client can connect to the
+    /// Windows listener through USB: device tcp:8765 -> host tcp:8765.
     /// </summary>
     public sealed class AdbForwarder : IDisposable
     {
-        private static readonly string AdbPath = LocateAdb();
+        private static readonly TimeSpan ProcessTimeout = TimeSpan.FromSeconds(5);
 
         public readonly int HostPort;
         public readonly int DevicePort;
 
+        private readonly object _stateLock = new();
         private CancellationTokenSource? _cts;
+        private Task? _loopTask;
         private bool _forwardActive;
+        private bool _disposed;
 
-        public event Action<string>?  OnLog;
-        public event Action<bool>?    OnForwardStateChanged;  // true = active
+        public event Action<string>? OnLog;
+        public event Action<bool>? OnForwardStateChanged;
 
         public AdbForwarder(int hostPort = 8765, int devicePort = 8765)
         {
-            HostPort   = hostPort;
+            HostPort = hostPort;
             DevicePort = devicePort;
         }
 
-        // ── Public API ────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Sets up port forwarding and polls every 3 seconds to keep it alive
-        /// (handles USB replug without user intervention).
-        /// </summary>
         public void Start()
         {
-            _cts = new CancellationTokenSource();
-            Task.Run(() => ForwardLoop(_cts.Token));
+            lock (_stateLock)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_loopTask is { IsCompleted: false }) return;
+
+                _cts?.Dispose();
+                _cts = new CancellationTokenSource();
+                _loopTask = Task.Run(() => ForwardLoopAsync(_cts.Token));
+            }
         }
 
-        /// <summary>Tears down the forward rule and stops polling.</summary>
-        public void Stop()
+        public void Stop() => StopAsync().GetAwaiter().GetResult();
+
+        public async Task StopAsync()
         {
-            _cts?.Cancel();
-            if (_forwardActive) RemoveForward();
+            CancellationTokenSource? cts;
+            Task? loopTask;
+            lock (_stateLock)
+            {
+                cts = _cts;
+                loopTask = _loopTask;
+                _cts = null;
+                _loopTask = null;
+            }
+
+            cts?.Cancel();
+            if (loopTask != null)
+            {
+                try { await loopTask.ConfigureAwait(false); }
+                catch (OperationCanceledException) { }
+            }
+
+            if (_forwardActive)
+            {
+                await RemoveForwardAsync(CancellationToken.None).ConfigureAwait(false);
+                SetForwardState(false);
+            }
+            cts?.Dispose();
         }
 
-        public void Dispose() => Stop();
+        public void Dispose()
+        {
+            lock (_stateLock)
+            {
+                if (_disposed) return;
+                _disposed = true;
+            }
+            Stop();
+        }
 
-        // ── Internal ──────────────────────────────────────────────────────────
-
-        private async Task ForwardLoop(CancellationToken ct)
+        private async Task ForwardLoopAsync(CancellationToken ct)
         {
             while (!ct.IsCancellationRequested)
             {
-                bool ok = ApplyForward();
-                if (ok != _forwardActive)
-                {
-                    _forwardActive = ok;
-                    OnForwardStateChanged?.Invoke(ok);
-                }
-                try { await Task.Delay(TimeSpan.FromSeconds(3), ct); }
+                bool ok = await ApplyForwardAsync(ct).ConfigureAwait(false);
+                if (ct.IsCancellationRequested) break;
+                SetForwardState(ok);
+
+                try { await Task.Delay(TimeSpan.FromSeconds(3), ct).ConfigureAwait(false); }
                 catch (OperationCanceledException) { break; }
             }
         }
 
-        private bool ApplyForward()
+        private async Task<bool> ApplyForwardAsync(CancellationToken ct)
         {
-            if (!File.Exists(AdbPath) && !IsOnPath("adb"))
+            string? adbPath = RuntimePaths.FindExecutable("adb.exe");
+            if (adbPath == null)
             {
-                Log("adb not found — USB mode unavailable");
+                Log("adb not found - USB mode unavailable");
                 return false;
             }
 
-            var result = RunAdb($"reverse tcp:{HostPort} tcp:{DevicePort}");
+            var result = await RunAdbAsync(adbPath, ct,
+                "reverse", $"tcp:{HostPort}", $"tcp:{DevicePort}").ConfigureAwait(false);
             if (result.Success)
             {
-                Log($"ADB reverse active: Device:{DevicePort} → PC:{HostPort}");
+                Log($"ADB reverse active: Device:{DevicePort} -> PC:{HostPort}");
                 return true;
             }
-            else
-            {
+
+            if (!ct.IsCancellationRequested)
                 Log($"ADB reverse failed: {result.Error?.Trim()}");
-                return false;
-            }
+            return false;
         }
 
-        private void RemoveForward()
+        private async Task RemoveForwardAsync(CancellationToken ct)
         {
-            RunAdb($"reverse --remove tcp:{DevicePort}");
+            string? adbPath = RuntimePaths.FindExecutable("adb.exe");
+            if (adbPath == null) return;
+
+            await RunAdbAsync(adbPath, ct,
+                "reverse", "--remove", $"tcp:{DevicePort}").ConfigureAwait(false);
             Log("ADB reverse removed");
         }
 
-        // ── ADB process helpers ───────────────────────────────────────────────
-
-        private static (bool Success, string? Output, string? Error) RunAdb(string args)
+        private static async Task<(bool Success, string? Output, string? Error)> RunAdbAsync(
+            string adbPath,
+            CancellationToken cancellationToken,
+            params string[] arguments)
         {
             try
             {
@@ -109,19 +139,42 @@ namespace SticamHost.Adb
                 {
                     StartInfo = new ProcessStartInfo
                     {
-                        FileName               = AdbPath,
-                        Arguments              = args,
-                        UseShellExecute        = false,
+                        FileName = adbPath,
+                        UseShellExecute = false,
                         RedirectStandardOutput = true,
-                        RedirectStandardError  = true,
-                        CreateNoWindow         = true,
+                        RedirectStandardError = true,
+                        CreateNoWindow = true,
                     }
                 };
+                foreach (string argument in arguments)
+                    proc.StartInfo.ArgumentList.Add(argument);
+
                 proc.Start();
-                string stdout = proc.StandardOutput.ReadToEnd();
-                string stderr = proc.StandardError.ReadToEnd();
-                proc.WaitForExit(3000);
+                Task<string> stdoutTask = proc.StandardOutput.ReadToEndAsync(cancellationToken);
+                Task<string> stderrTask = proc.StandardError.ReadToEndAsync(cancellationToken);
+                using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                timeout.CancelAfter(ProcessTimeout);
+
+                try
+                {
+                    await proc.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    try { proc.Kill(entireProcessTree: true); } catch { }
+                    try { await proc.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false); } catch { }
+                    if (cancellationToken.IsCancellationRequested)
+                        throw;
+                    return (false, null, $"adb timed out after {ProcessTimeout.TotalSeconds:0}s");
+                }
+
+                string stdout = await stdoutTask.ConfigureAwait(false);
+                string stderr = await stderrTask.ConfigureAwait(false);
                 return (proc.ExitCode == 0, stdout, stderr);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return (false, null, "cancelled");
             }
             catch (Exception ex)
             {
@@ -129,36 +182,13 @@ namespace SticamHost.Adb
             }
         }
 
-        private static string LocateAdb()
+        private void SetForwardState(bool active)
         {
-            // 1. Temp folder extracted tools\adb.exe
-            string tempPath = Path.Combine(Path.GetTempPath(), "STICamHost", "tools", "adb.exe");
-            if (File.Exists(tempPath)) return tempPath;
-
-            // 2. Bundled tools\adb.exe next to the exe
-            string bundled = Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory, "tools", "adb.exe");
-            if (File.Exists(bundled)) return bundled;
-
-            // 3. System PATH — just return "adb" and let the OS resolve it
-            return "adb";
+            if (_forwardActive == active) return;
+            _forwardActive = active;
+            OnForwardStateChanged?.Invoke(active);
         }
 
-        private static bool IsOnPath(string exe)
-        {
-            try
-            {
-                using var p = Process.Start(
-                    new ProcessStartInfo(exe, "--version")
-                    { UseShellExecute = false, CreateNoWindow = true,
-                      RedirectStandardOutput = true, RedirectStandardError = true });
-                p?.WaitForExit(1000);
-                return p?.ExitCode == 0;
-            }
-            catch { return false; }
-        }
-
-        private void Log(string msg) =>
-            OnLog?.Invoke($"[ADB] {msg}");
+        private void Log(string msg) => OnLog?.Invoke($"[ADB] {msg}");
     }
 }

@@ -3,3 +3,19 @@ plugins {
     id 'com.android.application' version '8.13.2' apply false
     id 'org.jetbrains.kotlin.android' version '1.9.22' apply false
 }
+
+allprojects {
+    dependencyLocking {
+        lockMode = LockMode.STRICT
+        lockAllConfigurations()
+    }
+
+    // AGP creates this lazily from the local SDK's android.jar. It contains no
+    // external module versions for Gradle to pin, and strict locking otherwise
+    // fails before parseDebugLocalResources on a fresh SDK-backed build.
+    configurations.configureEach { configuration ->
+        if (configuration.name == 'androidApis') {
+            configuration.resolutionStrategy.deactivateDependencyLocking()
+        }
+    }
+}

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "sourceRevision": null,
+  "createdUtc": null,
+  "inputs": [
+    {
+      "name": "Gradle binary distribution",
+      "version": "8.13",
+      "sourceUrl": "https://services.gradle.org/distributions/gradle-8.13-bin.zip",
+      "sha256": null,
+      "license": "Apache-2.0",
+      "retrievedUtc": null
+    },
+    {
+      "name": "Android Platform Tools",
+      "version": null,
+      "sourceUrl": "https://developer.android.com/tools/releases/platform-tools",
+      "sha256": null,
+      "license": "Apache-2.0",
+      "retrievedUtc": null
+    },
+    {
+      "name": "FFmpeg executable distribution",
+      "version": null,
+      "sourceUrl": "https://ffmpeg.org/download.html",
+      "buildProvider": null,
+      "buildConfiguration": null,
+      "sha256": null,
+      "license": null,
+      "retrievedUtc": null
+    }
+  ]
+}

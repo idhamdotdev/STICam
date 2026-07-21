@@ -1,8 +1,10 @@
 using System;
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,20 +12,13 @@ using System.Threading.Tasks;
 namespace SticamHost.VirtualCamera
 {
     /// <summary>
-    /// Pipes decoded BGR24 frames into a bundled ffmpeg.exe process.
-    ///
-    /// Output options (selected at runtime):
-    ///   A) RTSP stream  → rtsp://127.0.0.1:8554/sticam   (always available)
-    ///   B) OBS VirtualCam (DirectShow) → detected automatically
-    ///
-    /// OBS/VLC/Zoom can consume the RTSP URL as a media source.
-    /// When OBS VirtualCam is installed, the feed also appears as a real webcam
-    /// device in all video-conferencing apps.
+    /// Pipes decoded BGR24 frames into ffmpeg and publishes them to an external
+    /// RTSP server at rtsp://127.0.0.1:8554/sticam.
     ///
     /// Frame flow:
     ///   VideoDecoder.OnFrameDecoded → FfmpegPipe.PushFrame()
     ///       → BGR24 pixels written to ffmpeg stdin
-    ///           → ffmpeg encodes → RTSP / DirectShow output
+    ///           → ffmpeg encodes → RTSP output
     /// </summary>
     public sealed class FfmpegPipe : IDisposable
     {
@@ -32,29 +27,30 @@ namespace SticamHost.VirtualCamera
         public readonly int  Width;
         public readonly int  Height;
         public readonly int  Fps;
-        public readonly bool UseObsVirtualCam;
 
         public const string RtspUrl = "rtsp://127.0.0.1:8554/sticam";
 
-        private static readonly string FfmpegPath = LocateFfmpeg();
+        private static string? FfmpegPath => RuntimePaths.FindExecutable("ffmpeg.exe");
 
         // ── State ─────────────────────────────────────────────────────────────
 
         private Process?          _proc;
         private BinaryWriter?     _stdin;
+        private readonly object   _stateLock = new();
+        private BlockingCollection<Bitmap>? _frameQueue;
+        private Thread? _writerThread;
 
         private readonly byte[] _pixelBuf;  // reused per frame
-        private          bool   _running;
+        private volatile bool   _running;
 
         public event Action<string>? OnLog;
         public event Action<bool>?   OnRunningChanged;
 
-        public FfmpegPipe(int width, int height, int fps, bool useObsVirtualCam = false)
+        public FfmpegPipe(int width, int height, int fps)
         {
             Width            = width;
             Height           = height;
             Fps              = fps;
-            UseObsVirtualCam = useObsVirtualCam;
             _pixelBuf        = new byte[width * height * 3]; // BGR24
         }
 
@@ -63,20 +59,26 @@ namespace SticamHost.VirtualCamera
         public bool Start()
         {
             if (_running) return true;
-            if (!File.Exists(FfmpegPath))
+            string? ffmpegPath = FfmpegPath;
+            if (ffmpegPath == null)
             {
-                Log($"ffmpeg not found at: {FfmpegPath}");
+                Log("ffmpeg not found in the app tools directory or PATH");
+                return false;
+            }
+            if (!IsRtspServerAvailable())
+            {
+                Log("No RTSP server is listening on 127.0.0.1:8554. Start MediaMTX or another RTSP server first.");
                 return false;
             }
 
             var args = BuildFfmpegArgs();
             Log($"Starting ffmpeg: {args}");
 
-            _proc = new Process
+            var process = new Process
             {
                 StartInfo = new ProcessStartInfo
                 {
-                    FileName               = FfmpegPath,
+                    FileName               = ffmpegPath,
                     Arguments              = args,
                     UseShellExecute        = false,
                     RedirectStandardInput  = true,
@@ -85,38 +87,96 @@ namespace SticamHost.VirtualCamera
                 },
                 EnableRaisingEvents = true,
             };
+            _proc = process;
 
-            _proc.ErrorDataReceived += (_, e) => { if (e.Data != null) Log($"[ffmpeg] {e.Data}"); };
-            _proc.Exited += (_, _) =>
+            process.ErrorDataReceived += (_, e) => { if (e.Data != null) Log($"[ffmpeg] {e.Data}"); };
+            process.Exited += (_, _) =>
             {
-                _running = false;
+                BlockingCollection<Bitmap>? queue;
+                lock (_stateLock)
+                {
+                    if (!ReferenceEquals(_proc, process)) return;
+                    _running = false;
+                    queue = _frameQueue;
+                }
+                queue?.CompleteAdding();
                 OnRunningChanged?.Invoke(false);
                 Log("ffmpeg process exited");
             };
 
             try
             {
-                _proc.Start();
-                _proc.BeginErrorReadLine();
-                _stdin  = new BinaryWriter(_proc.StandardInput.BaseStream);
-                _running = true;
+                process.Start();
+                process.BeginErrorReadLine();
+                _stdin  = new BinaryWriter(process.StandardInput.BaseStream);
+                if (process.WaitForExit(750))
+                {
+                    Log($"ffmpeg exited during startup with code {process.ExitCode}");
+                    Stop();
+                    return false;
+                }
+                var queue = new BlockingCollection<Bitmap>(boundedCapacity: 1);
+                var writerThread = new Thread(() => FrameWriterLoop(queue))
+                {
+                    Name = "SticamRtspWriter",
+                    IsBackground = true,
+                };
+                lock (_stateLock)
+                {
+                    if (!ReferenceEquals(_proc, process) || process.HasExited)
+                    {
+                        Stop();
+                        return false;
+                    }
+                    _frameQueue = queue;
+                    _writerThread = writerThread;
+                    _running = true;
+                }
+                writerThread.Start();
                 OnRunningChanged?.Invoke(true);
-                Log($"Virtual camera active → {(UseObsVirtualCam ? "OBS VirtualCam" : RtspUrl)}");
+                Log($"RTSP publisher active → {RtspUrl}");
                 return true;
             }
             catch (Exception ex)
             {
                 Log($"ffmpeg start failed: {ex.Message}");
+                Stop();
                 return false;
             }
         }
 
         public void Stop()
         {
-            _running = false;
-            try { _stdin?.Close(); } catch { }
-            try { _proc?.Kill(); } catch { }
-            _proc?.Dispose(); _proc = null;
+            Process? process;
+            BinaryWriter? stdin;
+            BlockingCollection<Bitmap>? queue;
+            Thread? writerThread;
+            lock (_stateLock)
+            {
+                _running = false;
+                process = _proc;
+                stdin = _stdin;
+                _proc = null;
+                _stdin = null;
+                queue = _frameQueue;
+                writerThread = _writerThread;
+                _frameQueue = null;
+                _writerThread = null;
+            }
+            queue?.CompleteAdding();
+            try { stdin?.Close(); } catch { }
+            try
+            {
+                if (process is { HasExited: false })
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit(2000);
+                }
+            }
+            catch { }
+            bool writerStopped = writerThread?.Join(2000) ?? true;
+            if (writerStopped) queue?.Dispose();
+            process?.Dispose();
             OnRunningChanged?.Invoke(false);
         }
 
@@ -127,6 +187,45 @@ namespace SticamHost.VirtualCamera
         /// Called from the VideoDecoder output thread — must be fast.
         /// </summary>
         public void PushFrame(Bitmap bmp)
+        {
+            Bitmap clone;
+            try { clone = (Bitmap)bmp.Clone(); }
+            catch (Exception ex)
+            {
+                Log($"Frame clone failed: {ex.Message}");
+                return;
+            }
+
+            lock (_stateLock)
+            {
+                var queue = _frameQueue;
+                if (!_running || queue == null || queue.IsAddingCompleted)
+                {
+                    clone.Dispose();
+                    return;
+                }
+                try
+                {
+                    if (queue.TryTake(out Bitmap? stale)) stale.Dispose();
+                    if (!queue.TryAdd(clone)) clone.Dispose();
+                }
+                catch (InvalidOperationException)
+                {
+                    clone.Dispose();
+                }
+            }
+        }
+
+        private void FrameWriterLoop(BlockingCollection<Bitmap> queue)
+        {
+            foreach (Bitmap frame in queue.GetConsumingEnumerable())
+            {
+                try { WriteFrame(frame); }
+                finally { frame.Dispose(); }
+            }
+        }
+
+        private void WriteFrame(Bitmap bmp)
         {
             if (!_running || _stdin == null) return;
 
@@ -192,22 +291,10 @@ namespace SticamHost.VirtualCamera
                 "-vcodec libx264 -preset ultrafast -tune zerolatency " +
                 "-pix_fmt yuv420p -g 30 -bf 0";
 
-            if (UseObsVirtualCam)
-            {
-                // Push to OBS Virtual Camera DirectShow device
-                // Requires OBS Studio (with VirtualCam plugin) to be installed.
-                // The device name must match exactly what's registered.
-                string devName = DetectObsVirtualCamName() ?? "OBS Virtual Camera";
-                return $"-y {input} {encode} " +
-                       $"-f dshow \"video={devName}\" 2>&1";
-            }
-            else
-            {
-                // RTSP server — OBS/VLC can consume rtsp://127.0.0.1:8554/sticam
-                // -rtsp_transport tcp: avoids UDP fragmentation on loopback
-                return $"-y {input} {encode} " +
-                       $"-f rtsp -rtsp_transport tcp {RtspUrl}";
-            }
+            // OBS/VLC can consume the RTSP URL. TCP avoids UDP fragmentation
+            // on loopback.
+            return $"-y {input} {encode} " +
+                   $"-f rtsp -rtsp_transport tcp {RtspUrl}";
         }
 
         // ── OBS VirtualCam detection ──────────────────────────────────────────
@@ -221,7 +308,6 @@ namespace SticamHost.VirtualCamera
         {
             // Common names registered by OBS VirtualCam:
             string[] candidates = {
-                "STICam Camera",
                 "OBS Virtual Camera",
                 "OBS-Camera",
                 "OBS-VirtualCam",
@@ -231,7 +317,7 @@ namespace SticamHost.VirtualCamera
             {
                 using var root = Microsoft.Win32.Registry.ClassesRoot.OpenSubKey(
                     @"CLSID\{860BB310-5D01-11d0-BD3B-00A0C911CE86}\Instance");
-                if (root == null) return candidates[0];
+                if (root == null) return null;
 
                 foreach (var sub in root.GetSubKeyNames())
                 {
@@ -247,7 +333,7 @@ namespace SticamHost.VirtualCamera
             }
             catch { }
 
-            return candidates[0]; // default fallback
+            return null;
         }
 
         public static bool IsObsVirtualCamInstalled()
@@ -255,19 +341,16 @@ namespace SticamHost.VirtualCamera
 
         // ── Helpers ───────────────────────────────────────────────────────────
 
-        private static string LocateFfmpeg()
+        public static bool IsRtspServerAvailable()
         {
-            // 1. Temp folder extracted tools\ffmpeg.exe
-            string tempPath = Path.Combine(Path.GetTempPath(), "STICamHost", "tools", "ffmpeg.exe");
-            if (File.Exists(tempPath)) return tempPath;
-
-            // 2. Bundled tools\ffmpeg.exe
-            string bundled = Path.Combine(
-                AppDomain.CurrentDomain.BaseDirectory, "tools", "ffmpeg.exe");
-            if (File.Exists(bundled)) return bundled;
-
-            // 3. System PATH
-            return "ffmpeg";
+            try
+            {
+                using var client = new TcpClient();
+                using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
+                client.ConnectAsync("127.0.0.1", 8554, timeout.Token).GetAwaiter().GetResult();
+                return client.Connected;
+            }
+            catch { return false; }
         }
 
         private void Log(string msg) => OnLog?.Invoke($"[VirtualCam] {msg}");

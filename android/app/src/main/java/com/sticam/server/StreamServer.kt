@@ -3,18 +3,17 @@ package com.sticam.server
 import android.media.MediaCodec
 import android.util.Log
 import com.sticam.engine.CameraEngine
+import com.sticam.security.SecureChannel
 import kotlinx.coroutines.*
 import org.json.JSONObject
-import java.io.InputStream
-import java.io.OutputStream
-import java.net.ServerSocket
 import java.net.Socket
 
 /**
- * Sticam Stream Server
+ * STICam Android Transport Client
  *
- * Listens on a TCP port and serves encoded H.264 frames from CameraEngine
- * using the typed-packet protocol (compatible with PortablePad wire format).
+ * Opens an outbound connection to the Windows listener, authenticates it with
+ * the configured pairing key, and encrypts each typed packet with AES-GCM.
+ * The framing below describes the plaintext inside the secure v2 records.
  *
  * Wire protocol (upstream — Android → Windows):
  *   [1B type] [4B big-endian length] [data]
@@ -31,7 +30,8 @@ import java.net.Socket
 class StreamServer(
     private val host: String,
     private val port: Int = 8765,
-    private val engine: CameraEngine
+    private val engine: CameraEngine,
+    private val pairingKey: String,
 ) {
     companion object {
         private const val TAG = "SticamServer"
@@ -43,10 +43,11 @@ class StreamServer(
 
     private class FramePacket(val type: Byte, val data: ByteArray)
     private val sendQueue = java.util.concurrent.LinkedBlockingQueue<FramePacket>(30)
+    private val frameShedding = FrameSheddingPolicy(congestionThreshold = 10)
 
     private var activeSocket: Socket? = null
     private var scope: CoroutineScope? = null
-    private var clientOutput: OutputStream? = null
+    @Volatile private var secureChannel: SecureChannel? = null
 
     // SPS/PPS extracted from the first encoder output
     private var spsData: ByteArray? = null
@@ -60,13 +61,10 @@ class StreamServer(
     var onParamsChangedFromHost: ((zoom: Float?, faceTracking: Boolean?, iso: Int?, brightness: Float?, focus: Float?, flash: Boolean?, cameraId: String?, resolution: String?, arFilter: String?, lutFilter: String?) -> Unit)? = null
 
     fun sendCommand(json: String) {
-        val out = clientOutput ?: return
+        val channel = secureChannel ?: return
         scope?.launch(Dispatchers.IO) {
             try {
-                synchronized(this@StreamServer) {
-                    sendTypedPacket(out, TYPE_CMD, json.toByteArray(Charsets.UTF_8))
-                    out.flush()
-                }
+                channel.send(TYPE_CMD, json.toByteArray(Charsets.UTF_8))
                 Log.i(TAG, "Sent command to client: $json")
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to send command: ${e.message}")
@@ -75,7 +73,8 @@ class StreamServer(
     }
 
     fun start() {
-        scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val serverScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        scope = serverScope
 
         // Wire up the encoder callback (chain if already set by recording)
         val existing = engine.onEncodedData
@@ -84,7 +83,7 @@ class StreamServer(
             offerEncodedData(data, info)
         }
 
-        scope!!.launch {
+        serverScope.launch {
             while (isActive) {
                 try {
                     Log.i(TAG, "Connecting to $host:$port...")
@@ -93,12 +92,19 @@ class StreamServer(
                     client.tcpNoDelay = true
                     client.sendBufferSize = 256 * 1024
                     activeSocket = client
-                    Log.i(TAG, "Connected to host: ${client.remoteSocketAddress}")
+                    val channel = try {
+                        SecureChannel.connect(client, pairingKey)
+                    } catch (e: Exception) {
+                        runCatching { client.close() }
+                        throw e
+                    }
+                    secureChannel = channel
+                    Log.i(TAG, "Authenticated encrypted connection: ${client.remoteSocketAddress}")
                     onClientConnected?.invoke()
 
                     engine.requestKeyFrame()
 
-                    handleClient(client)
+                    handleClient(client, channel)
                 } catch (e: Exception) {
                     if (isActive) {
                         Log.e(TAG, "Connection error: ${e.message}")
@@ -116,7 +122,7 @@ class StreamServer(
     private fun updateSignalStrength() {
         val qSize = sendQueue.size
         val bars = when {
-            clientOutput == null -> 0
+            secureChannel == null -> 0
             qSize == 0 -> 4
             qSize <= 2 -> 3
             qSize <= 5 -> 2
@@ -132,11 +138,13 @@ class StreamServer(
 
     fun stop() {
         engine.onEncodedData = null
-        clientOutput = null
+        secureChannel?.close()
+        secureChannel = null
         scope?.cancel(); scope = null
         runCatching { activeSocket?.close() }
         activeSocket = null
         sendQueue.clear()
+        frameShedding.reset()
         updateSignalStrength()
     }
 
@@ -144,33 +152,30 @@ class StreamServer(
     //  Client handling
     // ═════════════════════════════════════════════════════════════════════
 
-    private suspend fun handleClient(socket: Socket) {
+    private suspend fun handleClient(socket: Socket, channel: SecureChannel) {
         socket.use { s ->
-            val out = s.getOutputStream()
-            val inp = s.getInputStream()
-            clientOutput = out
             sendQueue.clear()
+            frameShedding.reset()
             updateSignalStrength()
 
             // Queue initial configuration (SPS/PPS) if we have it cached
             sendConfig()
 
             // Start reader and sender jobs
-            val readerJob = scope!!.launch { readCommands(s, inp) }
-            val senderJob = scope!!.launch(Dispatchers.IO) {
+            val clientScope = scope ?: return
+            val readerJob = clientScope.launch { readCommands(s, channel) }
+            val senderJob = clientScope.launch(Dispatchers.IO) {
                 try {
                     while (activeSocket == s && !s.isClosed) {
                         val packet = sendQueue.poll(100, java.util.concurrent.TimeUnit.MILLISECONDS)
                         if (packet != null) {
-                            synchronized(this@StreamServer) {
-                                sendTypedPacket(out, packet.type, packet.data)
-                                out.flush()
-                            }
+                            channel.send(packet.type, packet.data)
                             updateSignalStrength()
                         }
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "Sender loop error: ${e.message}")
+                    runCatching { s.close() }
                 }
             }
 
@@ -180,7 +185,8 @@ class StreamServer(
                     delay(500)
                 }
             } finally {
-                clientOutput = null
+                secureChannel = null
+                channel.close()
                 readerJob.cancel()
                 senderJob.cancel()
                 sendQueue.clear()
@@ -212,7 +218,7 @@ class StreamServer(
             return
         }
 
-        if (clientOutput == null) return
+        if (secureChannel == null) return
         if (spsData == null || ppsData == null) return
 
         val isKey = (info.flags and MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0
@@ -220,18 +226,30 @@ class StreamServer(
     }
 
     private fun queueFrame(type: Byte, data: ByteArray, isKeyFrame: Boolean) {
-        if (type == TYPE_FRAME) {
-            // Keep latency low: if queue is getting full, drop non-keyframes
-            if (sendQueue.size >= 10 && !isKeyFrame) {
-                return // Drop this delta frame to avoid lag
-            }
+        if (type != TYPE_FRAME) {
+            enqueuePacket(type, data)
+            return
         }
 
-        // Force-clear oldest frames if we hit hard limit to keep it real-time
-        while (sendQueue.size >= 15) {
-            sendQueue.poll()
+        when (frameShedding.decide(sendQueue.size, isKeyFrame)) {
+            FrameQueueAction.ENQUEUE -> enqueuePacket(type, data)
+            FrameQueueAction.DROP_UNTIL_KEYFRAME -> return
+            FrameQueueAction.DROP_AND_REQUEST_KEYFRAME -> {
+                sendQueue.clear()
+                updateSignalStrength()
+                engine.requestKeyFrame()
+            }
+            FrameQueueAction.RESYNC_WITH_KEYFRAME -> {
+                sendQueue.clear()
+                spsData?.let { enqueuePacket(TYPE_SPS, it) }
+                ppsData?.let { enqueuePacket(TYPE_PPS, it) }
+                enqueuePacket(TYPE_FRAME, data)
+            }
         }
-        sendQueue.offer(FramePacket(type, data.clone()))
+    }
+
+    private fun enqueuePacket(type: Byte, data: ByteArray) {
+        sendQueue.offer(FramePacket(type, data))
         updateSignalStrength()
     }
 
@@ -239,17 +257,17 @@ class StreamServer(
      * Parses Annex-B data for SPS (NAL type 7) and PPS (NAL type 8), and caches them.
      */
     private fun extractConfig(annexB: ByteArray) {
-        val nals = parseNalUnits(annexB)
-        for ((type, bytes) in nals) {
-            when (type) {
-                7 -> spsData = bytes
-                8 -> ppsData = bytes
+        val nals = H264AnnexB.parse(annexB)
+        for (nal in nals) {
+            when (nal.type) {
+                7 -> spsData = nal.bytes
+                8 -> ppsData = nal.bytes
             }
         }
         val sps = spsData; val pps = ppsData
         if (sps != null && pps != null) {
             onConfigData?.invoke(sps, pps)
-            if (clientOutput != null) {
+            if (secureChannel != null) {
                 queueFrame(TYPE_SPS, sps, true)
                 queueFrame(TYPE_PPS, pps, true)
             }
@@ -268,20 +286,15 @@ class StreamServer(
     //  Command ingestion (Windows → Android)
     // ═════════════════════════════════════════════════════════════════════
 
-    private fun readCommands(socket: Socket, inp: InputStream) {
-        val hdr = ByteArray(5)
+    private fun readCommands(socket: Socket, channel: SecureChannel) {
         try {
             while (true) {
-                readFully(inp, hdr)
-                val type = hdr[0]
-                val len = readBigEndianInt(hdr, 1)
-                if (len <= 0 || len > 1_000_000) continue
-
-                val payload = ByteArray(len)
-                readFully(inp, payload)
-
-                if (type == TYPE_CMD) {
-                    handleCommand(String(payload, Charsets.UTF_8))
+                val packet = channel.receive()
+                if (packet.type == TYPE_CMD) {
+                    if (packet.payload.isEmpty() || packet.payload.size > 64 * 1024) {
+                        throw SecurityException("Invalid command payload length")
+                    }
+                    handleCommand(String(packet.payload, Charsets.UTF_8))
                 }
             }
         } catch (_: Exception) {
@@ -326,54 +339,4 @@ class StreamServer(
     //  Protocol helpers
     // ═════════════════════════════════════════════════════════════════════
 
-    /** Writes [type(1B)][length(4B big-endian)][data] */
-    @Synchronized
-    private fun sendTypedPacket(out: OutputStream, type: Byte, data: ByteArray) {
-        val hdr = ByteArray(5)
-        hdr[0] = type
-        hdr[1] = (data.size shr 24 and 0xFF).toByte()
-        hdr[2] = (data.size shr 16 and 0xFF).toByte()
-        hdr[3] = (data.size shr 8  and 0xFF).toByte()
-        hdr[4] = (data.size        and 0xFF).toByte()
-        out.write(hdr)
-        out.write(data)
-    }
-
-    /** Parses Annex-B into (nalType, nalBytes) pairs. */
-    private fun parseNalUnits(annexB: ByteArray): List<Pair<Int, ByteArray>> {
-        data class Start(val pos: Int, val scLen: Int)
-        val starts = mutableListOf<Start>()
-        var i = 0
-        while (i <= annexB.size - 3) {
-            if (annexB[i] == 0.toByte() && annexB[i+1] == 0.toByte()) {
-                if (i+3 < annexB.size && annexB[i+2] == 0.toByte() && annexB[i+3] == 1.toByte()) {
-                    starts.add(Start(i, 4)); i += 4; continue
-                } else if (annexB[i+2] == 1.toByte()) {
-                    starts.add(Start(i, 3)); i += 3; continue
-                }
-            }
-            i++
-        }
-        return starts.mapIndexed { idx, s ->
-            val end = if (idx + 1 < starts.size) starts[idx + 1].pos else annexB.size
-            val nalType = annexB[s.pos + s.scLen].toInt() and 0x1F
-            val nalBytes = annexB.copyOfRange(s.pos, end)
-            nalType to nalBytes
-        }
-    }
-
-    private fun readFully(inp: InputStream, buf: ByteArray) {
-        var off = 0
-        while (off < buf.size) {
-            val n = inp.read(buf, off, buf.size - off)
-            if (n < 0) error("EOS")
-            off += n
-        }
-    }
-
-    private fun readBigEndianInt(b: ByteArray, off: Int): Int =
-        ((b[off].toInt() and 0xFF) shl 24) or
-        ((b[off+1].toInt() and 0xFF) shl 16) or
-        ((b[off+2].toInt() and 0xFF) shl 8) or
-         (b[off+3].toInt() and 0xFF)
 }

@@ -19,12 +19,13 @@
     <AssemblyVersion>1.1.0</AssemblyVersion>
     <FileVersion>1.1.0</FileVersion>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- FFmpeg bindings + native DLLs for H.264 decoding -->
-    <PackageReference Include="Sdcb.FFmpeg"                        Version="6.0.0" />
-    <PackageReference Include="Sdcb.FFmpeg.runtime.windows-x64"   Version="6.0.0.20230302" />
+    <PackageReference Include="Sdcb.FFmpeg"                        Version="7.0.0" />
+    <PackageReference Include="Sdcb.FFmpeg.runtime.windows-x64"   Version="7.0.0" />
 
     <!-- System.Text.Json already in .NET 8 BCL — no extra ref needed -->
   </ItemGroup>
@@ -39,7 +40,6 @@
     <EmbeddedResource Include="tools\AdbWinApi.dll"   Condition="Exists('tools\AdbWinApi.dll')" />
     <EmbeddedResource Include="tools\AdbWinUsbApi.dll" Condition="Exists('tools\AdbWinUsbApi.dll')" />
     <EmbeddedResource Include="tools\ffmpeg.exe"      Condition="Exists('tools\ffmpeg.exe')" />
-    <EmbeddedResource Include="tools\obs-virtualcam-module64.dll" Condition="Exists('tools\obs-virtualcam-module64.dll')" />
     <EmbeddedResource Include="fonts\Lalezar-Regular.ttf" Condition="Exists('fonts\Lalezar-Regular.ttf')" />
   </ItemGroup>
 

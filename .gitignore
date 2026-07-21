@@ -1,48 +1,64 @@
-# ── Android ────────────────────────────────────────────────────────
+# Android build and local configuration
 *.iml
 .gradle/
+.gradle-user/
+.local-appdata/
 .idea/
 local.properties
 android/.gradle/
 android/build/
 android/app/build/
 android/captures/
-android/app/src/main/assets/
 
-# Generated APKs
+# Generated Android packages
 *.apk
 *.aab
 
-# ── Windows / .NET ─────────────────────────────────────────────────
+# Windows / .NET outputs
 windows/SticamHost/bin/
 windows/SticamHost/obj/
+windows/SticamHost.Tests/bin/
+windows/SticamHost.Tests/obj/
 windows/SticamHost/publish/
 windows/SticamHost/publish-single/
 windows/SticamHost/publish.zip
 *.user
 .vs/
 
-# Tools bundled at build — do NOT commit binaries
+# Runtime tools acquired separately. Releases must pin and hash these inputs.
 windows/SticamHost/tools/adb.exe
 windows/SticamHost/tools/AdbWinApi.dll
 windows/SticamHost/tools/AdbWinUsbApi.dll
 windows/SticamHost/tools/ffmpeg.exe
+windows/SticamHost/tools/obs-virtualcam-module64.dll
 
-# ── Media & Design ─────────────────────────────────────────────────
-# Ignore design mockups but keep logo icons
+# Local signing material and environment files
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.snk
+android/keystore.properties
+.env
+.env.*
+!.env.example
+secrets/
+
+# Local AI/editor settings
+.claude/settings.local.json
+
+# Media and design work; committed logo/icon assets remain visible
 sticam_media/design_*
 idhamdev-pallete.png
 
-# ── iOS (unused in this environment) ───────────────────────────────
-ios/
-
-# ── OS artifacts ───────────────────────────────────────────────────
+# OS artifacts
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# ── Local Backups, Builds & Dumps ──────────────────────────────────
-*backup*
+# Local backups, builds, releases, and diagnostic dumps
+*_backup.*
+*.bak
 backup/
 Builds/
 release/
@@ -55,10 +71,8 @@ android/uidump*.xml
 *screen.png
 *.mp4
 
-# ── Installer Assets & Installer Script ────────────────────────────
-windows/SticamInstaller.iss
-windows/installer_icon.ico
-windows/sidebar_image.bmp
-windows/sidebar_image.png
-windows/small_image.bmp
-
+# Source-bearing paths are deliberately not ignored. In particular:
+# - android/app/src/main/assets/
+# - ios/
+# - Windows installer scripts and artwork
+# If present, they must be reviewed and either tracked or kept outside the repo.

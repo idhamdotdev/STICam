@@ -1,6 +1,8 @@
 package com.sticam.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.graphics.Matrix
 import android.view.TextureView
 import android.view.Surface
@@ -36,6 +38,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -66,6 +69,17 @@ fun SticamScreen(vm: SticamViewModel) {
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        vm.onLegacyStoragePermissionResult(granted)
+    }
+    LaunchedEffect(state.needsLegacyStoragePermission) {
+        if (state.needsLegacyStoragePermission) {
+            storagePermissionLauncher.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
+    }
+
     LaunchedEffect(state.isScreenOffMode) {
         val activity = context as? android.app.Activity
         activity?.window?.attributes = activity?.window?.attributes?.apply {
@@ -543,8 +557,9 @@ private fun CameraPreviewLayer(
                             ) {
                                 st.setDefaultBufferSize(state.outW, state.outH)
                                 applyTransform(this@apply, w, h)
-                                readySurface = android.view.Surface(st)
-                                vm.onPreviewSurfaceReady(readySurface!!)
+                                val surface = android.view.Surface(st)
+                                readySurface = surface
+                                vm.onPreviewSurfaceReady(surface)
                             }
                             override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) {
                                 st.setDefaultBufferSize(state.outW, state.outH)
@@ -552,6 +567,7 @@ private fun CameraPreviewLayer(
                             }
                             override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean {
                                 vm.onPreviewSurfaceDestroyed()
+                                readySurface?.release()
                                 readySurface = null
                                 return true
                             }
@@ -707,6 +723,8 @@ fun IdleConnectionScreen(
     vm: SticamViewModel,
     onConnectClick: () -> Unit
 ) {
+    val isUsb = state.mode is com.sticam.ConnectionMode.Usb
+    val canConnect = state.pairingKey.length == 32 && (isUsb || state.wifiIp.isNotBlank())
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -757,7 +775,6 @@ fun IdleConnectionScreen(
                     }
                 }
 
-                val isUsb = state.mode is com.sticam.ConnectionMode.Usb
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -824,6 +841,56 @@ fun IdleConnectionScreen(
                         )
                     }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "PAIRING KEY FROM PC",
+                    color = Color.White.copy(alpha = 0.75f),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = Lalezar,
+                )
+                Spacer(modifier = Modifier.height(5.dp))
+                Box(
+                    modifier = Modifier
+                        .width(360.dp)
+                        .height(42.dp)
+                        .border(3.dp, if (state.pairingKey.length == 32) Color(0xFF1ECC91) else Color(0xFFD1D5DB))
+                        .background(Color.Black)
+                        .padding(horizontal = 12.dp),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    BasicTextField(
+                        value = state.pairingKey,
+                        onValueChange = vm::setPairingKey,
+                        singleLine = true,
+                        textStyle = TextStyle(
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontFamily = FontFamily.Monospace,
+                        ),
+                        cursorBrush = SolidColor(Color.White),
+                        visualTransformation = PasswordVisualTransformation(mask = '•'),
+                        decorationBox = { innerTextField ->
+                            if (state.pairingKey.isEmpty()) {
+                                Text(
+                                    text = "Paste the 32-character key",
+                                    color = Color.White.copy(alpha = 0.4f),
+                                    fontSize = 13.sp,
+                                )
+                            }
+                            innerTextField()
+                        },
+                    )
+                }
+                Text(
+                    text = "CLEAR SAVED KEY",
+                    color = Color.White.copy(alpha = 0.55f),
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .padding(top = 5.dp)
+                        .clickable(onClick = vm::clearPairingKey),
+                )
             }
 
             Column(
@@ -847,9 +914,9 @@ fun IdleConnectionScreen(
                     modifier = Modifier
                         .width(180.dp)
                         .height(60.dp)
-                        .border(4.dp, Color(0xFFD1D5DB))
-                        .background(Color(0xFF2A2A2A))
-                        .clickable { onConnectClick() },
+                        .border(4.dp, if (canConnect) Color(0xFFD1D5DB) else Color(0xFF667085))
+                        .background(if (canConnect) Color(0xFF2A2A2A) else Color(0xFF1A1A1A))
+                        .clickable(enabled = canConnect) { onConnectClick() },
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
@@ -964,6 +1031,18 @@ fun BottomControlBar(
                 onClick = { vm.setScreenOffMode(true) }
             ) {
                 ScreenOffIcon(color = Color.White)
+            }
+
+            ControlButton(
+                active = state.isRecording,
+                onClick = { if (state.isRecording) vm.stopRecording() else vm.startRecording() }
+            ) {
+                Text(
+                    text = if (state.isRecording) state.recLabel else "REC",
+                    color = Color.White,
+                    fontSize = if (state.isRecording) 9.sp else 11.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                )
             }
         }
 
@@ -1373,6 +1452,20 @@ fun SideControlBar(
                     onClick = { vm.setScreenOffMode(true) }
                 ) {
                     Box(Modifier.portraitRotate()) { ScreenOffIcon(color = iconColor) }
+                }
+
+                ControlButton(
+                    active = state.isRecording,
+                    onClick = { if (state.isRecording) vm.stopRecording() else vm.startRecording() }
+                ) {
+                    Box(Modifier.portraitRotate()) {
+                        Text(
+                            text = if (state.isRecording) state.recLabel else "REC",
+                            color = iconColor,
+                            fontSize = if (state.isRecording) 9.sp else 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                        )
+                    }
                 }
             }
 

@@ -9,6 +9,7 @@ import android.os.HandlerThread
 import android.view.Surface
 import android.util.Log
 import com.sticam.engine.ArFaceData
+import java.util.concurrent.atomic.AtomicBoolean
 
 class GlRenderer(
     private val previewSurface: Surface,
@@ -34,6 +35,8 @@ class GlRenderer(
     private var arTextureId = -1
     private var surfaceTexture: SurfaceTexture? = null
     private var inputSurface: Surface? = null
+    private val frameDrawScheduled = AtomicBoolean(false)
+    private val released = AtomicBoolean(false)
     
     private var program = -1
     private var uSTMatrixHandle = -1
@@ -126,8 +129,9 @@ class GlRenderer(
     fun attachWindowSurfaces() {
         handler.post {
             try {
-                eglPreviewSurface = eglManager!!.createWindowSurface(previewSurface)
-                eglEncoderSurface = eglManager!!.createWindowSurface(encoderSurface)
+                val egl = eglManager ?: return@post
+                eglPreviewSurface = egl.createWindowSurface(previewSurface)
+                eglEncoderSurface = egl.createWindowSurface(encoderSurface)
             } catch (e: Exception) {
                 Log.e("GlRenderer", "Failed to attach window surfaces", e)
             }
@@ -135,10 +139,13 @@ class GlRenderer(
     }
     
     private fun setupGl() {
-        eglManager = EglManager()
+        if (released.get()) return
+        val egl = EglManager()
+        eglManager = egl
         // Initialize with a dummy Pbuffer so we don't lock the camera surfaces prematurely
-        pbufferSurface = eglManager!!.createPbufferSurface(1, 1)
-        eglManager!!.makeCurrent(pbufferSurface!!)
+        val pbuffer = egl.createPbufferSurface(1, 1)
+        pbufferSurface = pbuffer
+        egl.makeCurrent(pbuffer)
         
         program = createProgram(VERTEX_SHADER_300, FRAGMENT_SHADER)
         if (program == 0) throw RuntimeException("Failed to create program")
@@ -170,16 +177,26 @@ class GlRenderer(
         // Initial LUT
         setFilter("None")
         
-        surfaceTexture = SurfaceTexture(oesTextureId)
+        val cameraTexture = SurfaceTexture(oesTextureId)
+        surfaceTexture = cameraTexture
         // Set the buffer size to match the raw camera capture size precisely.
         // We bypass stMatrix in the shader, so SurfaceTexture's scaling won't distort the image.
-        surfaceTexture!!.setDefaultBufferSize(cameraWidth, cameraHeight)
-        surfaceTexture!!.setOnFrameAvailableListener({
-            handler.post { drawFrame() }
+        cameraTexture.setDefaultBufferSize(cameraWidth, cameraHeight)
+        cameraTexture.setOnFrameAvailableListener({
+            if (frameDrawScheduled.compareAndSet(false, true)) {
+                handler.post {
+                    try {
+                        if (!released.get()) drawFrame()
+                    } finally {
+                        frameDrawScheduled.set(false)
+                    }
+                }
+            }
         }, handler)
         
-        inputSurface = Surface(surfaceTexture)
-        onInputSurfaceReady(inputSurface!!)
+        val surface = Surface(cameraTexture)
+        inputSurface = surface
+        onInputSurfaceReady(surface)
     }
     
     fun setFilter(filterName: String) {
@@ -443,14 +460,23 @@ class GlRenderer(
     }
     
     fun release() {
-        handler.post {
-            inputSurface?.release()
-            surfaceTexture?.release()
-            eglPreviewSurface?.let { eglManager?.releaseSurface(it) }
-            eglEncoderSurface?.let { eglManager?.releaseSurface(it) }
-            eglManager?.release()
+        if (!released.compareAndSet(false, true)) return
+        val posted = handler.post {
+            surfaceTexture?.setOnFrameAvailableListener(null)
+            inputSurface?.release(); inputSurface = null
+            surfaceTexture?.release(); surfaceTexture = null
+            val egl = eglManager
+            eglPreviewSurface?.let { egl?.releaseSurface(it) }
+            eglEncoderSurface?.let { egl?.releaseSurface(it) }
+            pbufferSurface?.let { egl?.releaseSurface(it) }
+            eglPreviewSurface = null
+            eglEncoderSurface = null
+            pbufferSurface = null
+            egl?.release()
+            eglManager = null
             handlerThread.quitSafely()
         }
+        if (!posted) handlerThread.quitSafely()
     }
     
     private fun loadShader(type: Int, shaderCode: String): Int {

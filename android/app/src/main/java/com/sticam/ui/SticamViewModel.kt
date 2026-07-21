@@ -2,26 +2,34 @@ package com.sticam.ui
 
 import android.app.Activity
 import android.app.Application
+import android.Manifest
+import android.content.Context
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
-import android.content.Context
+import android.os.Build
 import android.util.Log
 import android.view.Surface
 import java.lang.ref.WeakReference
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sticam.ConnectionMode
 import com.sticam.engine.CameraEngine
 import com.sticam.engine.RecordingSession
+import com.sticam.security.PairingKeyStore
 import com.sticam.server.StreamServer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 // ── UI State ──────────────────────────────────────────────────────────────────
 
@@ -45,6 +53,7 @@ data class SticamUiState(
     // Connection
     val mode: ConnectionMode      = ConnectionMode.Usb,
     val wifiIp: String            = "",
+    val pairingKey: String        = "",
     val isStreaming: Boolean       = false,
     val clientConnected: Boolean   = false,
     val statusMessage: String      = "STANDBY",
@@ -101,6 +110,7 @@ data class SticamUiState(
     val focusValue: Float             = -1f,
     val isScreenOffMode: Boolean      = false,
     val wifiSignalBars: Int           = 4,
+    val needsLegacyStoragePermission: Boolean = false,
 )
 
 // Derived display string for recording timer
@@ -114,7 +124,9 @@ val SticamUiState.zoomLabel: String get() = "%.1f×".format(zoom)
 
 class SticamViewModel(app: Application) : AndroidViewModel(app) {
 
-    private val _ui = MutableStateFlow(SticamUiState())
+    private val _ui = MutableStateFlow(
+        SticamUiState(),
+    )
     val ui: StateFlow<SticamUiState> = _ui.asStateFlow()
 
     /** Weak reference to the host Activity for programmatic orientation changes. */
@@ -131,12 +143,30 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     internal val engine        = CameraEngine(app)
     private var server:         StreamServer?    = null
     private var recording:      RecordingSession? = null
+    private var previewSurface: Surface? = null
+    private var restartJob: Job? = null
+    private var recordingStartJob: Job? = null
+    private var pairingSaveJob: Job? = null
+    private val pairingEdited = java.util.concurrent.atomic.AtomicBoolean(false)
 
     // SPS/PPS cache for lazy recording setup
-    private var cachedSps: ByteArray? = null
-    private var cachedPps: ByteArray? = null
+    @Volatile private var cachedSps: ByteArray? = null
+    @Volatile private var cachedPps: ByteArray? = null
 
     init {
+        viewModelScope.launch(Dispatchers.IO) {
+            val storedPairingKey = runCatching { PairingKeyStore.load(app) }.getOrDefault("")
+            if (storedPairingKey.isNotEmpty() && !pairingEdited.get()) {
+                _ui.update { state ->
+                    if (!pairingEdited.get() && state.pairingKey.isEmpty()) {
+                        state.copy(pairingKey = storedPairingKey)
+                    } else {
+                        state
+                    }
+                }
+            }
+        }
+
         // Enumerate cameras immediately so the UI can show the selector
         enumCameras(app)
 
@@ -211,18 +241,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         
         // Restart the camera engine with the new camera ID if currently streaming
         if (_ui.value.isStreaming) {
-            engine.stop(keepThreads = true)
-            // Wait briefly for camera hardware state cleanup
-            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                engine.start(
-                    previewSurface = engine.activePreviewSurface,
-                    cameraId       = id,
-                    width          = _ui.value.preset.width,
-                    height         = _ui.value.preset.height,
-                    fps            = _ui.value.preset.fps,
-                    bitrateMbps    = 8
-                )
-            }, 300)
+            previewSurface?.let { restartAfterRecording(it) }
         }
     }
 
@@ -294,7 +313,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         val oldPreset = _ui.value.preset
         _ui.update { it.copy(preset = p, showPresetSelector = false) }
         if (oldPreset != p) {
-            engine.activePreviewSurface?.let { restartCameraEngine(it) }
+            previewSurface?.let { restartAfterRecording(it) }
             sendSyncParamsToClient() // Sync new resolution state back to PC
         }
     }
@@ -390,6 +409,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     fun togglePresetSelector() = _ui.update { it.copy(showPresetSelector = !it.showPresetSelector) }
 
     fun onPreviewSurfaceReady(surface: Surface) {
+        previewSurface = surface
         if (!_ui.value.isStreaming) {
             startStreaming(surface)
         } else {
@@ -398,16 +418,20 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun onPreviewSurfaceDestroyed() {
-        // We do not stop the server here, just let the engine know the surface is gone if needed
+        previewSurface = null
     }
 
     private fun restartCameraEngine(surface: Surface) {
-        val state = _ui.value
-        viewModelScope.launch {
+        restartJob?.cancel()
+        restartJob = viewModelScope.launch {
             try {
                 engine.stop(keepThreads = true)
+                cachedSps = null
+                cachedPps = null
                 // Wait briefly for camera hardware state cleanup
                 kotlinx.coroutines.delay(350)
+                if (!_ui.value.isStreaming || previewSurface !== surface) return@launch
+                val state = _ui.value
                 @Suppress("MissingPermission")
                 engine.start(
                     previewSurface = surface,
@@ -422,7 +446,20 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                 engine.requestKeyFrame()
             } catch (e: Exception) {
                 _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
+            } finally {
+                if (restartJob === kotlinx.coroutines.currentCoroutineContext()[Job]) {
+                    restartJob = null
+                }
             }
+        }
+    }
+
+    private fun restartAfterRecording(surface: Surface) {
+        recordingStartJob?.cancel()
+        if (recording != null) {
+            stopRecording { restartCameraEngine(surface) }
+        } else {
+            restartCameraEngine(surface)
         }
     }
 
@@ -451,11 +488,27 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun startStreaming(previewSurface: Surface?) {
         if (_ui.value.isStreaming) return
+        this.previewSurface = previewSurface
         val state = _ui.value
+        if (state.pairingKey.length != 32 || !state.pairingKey.all { it in '0'..'9' || it in 'A'..'F' }) {
+            _ui.update { it.copy(statusMessage = "ERR: Enter the 32-character PC pairing key") }
+            return
+        }
+        if (state.mode is ConnectionMode.WiFi && state.wifiIp.isBlank()) {
+            _ui.update { it.copy(statusMessage = "ERR: Enter the PC IP address") }
+            return
+        }
         viewModelScope.launch {
             val host = if (state.mode is ConnectionMode.Usb) "127.0.0.1" else state.wifiIp.trim()
-            val srv = StreamServer(host = host, port = 8765, engine = engine)
+            val srv = StreamServer(
+                host = host,
+                port = 8765,
+                engine = engine,
+                pairingKey = state.pairingKey,
+            )
+            val hasEverConnected = java.util.concurrent.atomic.AtomicBoolean(false)
             srv.onClientConnected    = {
+                hasEverConnected.set(true)
                 _ui.update { it.copy(clientConnected = true,  statusMessage = "CLIENT_CONNECTED") }
                 viewModelScope.launch {
                     kotlinx.coroutines.delay(300)
@@ -463,7 +516,15 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                     sendSyncParamsToClient()
                 }
             }
-            srv.onClientDisconnected = { _ui.update { it.copy(clientConnected = false, statusMessage = "WAITING_CLIENT") } }
+            srv.onClientDisconnected = {
+                _ui.update {
+                    if (server === srv && it.isStreaming) {
+                        it.copy(clientConnected = false, statusMessage = "WAITING_CLIENT")
+                    } else {
+                        it.copy(clientConnected = false)
+                    }
+                }
+            }
             // Cache SPS/PPS when StreamServer extracts them
             srv.onConfigData = { sps, pps -> cachedSps = sps; cachedPps = pps }
             srv.onSignalStrengthChanged = { bars -> _ui.update { it.copy(wifiSignalBars = bars) } }
@@ -500,7 +561,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
             // Auto-stop if no client connects within 30 seconds
             viewModelScope.launch {
                 kotlinx.coroutines.delay(30000)
-                if (server == srv && !_ui.value.clientConnected) {
+                if (server === srv && !hasEverConnected.get()) {
                     Log.i("SticamViewModel", "Connection timeout (30s) reached. Stopping stream.")
                     stopStreaming()
                     _ui.update { it.copy(statusMessage = "ERR: Timeout (No PC)") }
@@ -521,12 +582,15 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(isStreaming = true, statusMessage = "WAITING_CLIENT") }
             } catch (e: Exception) {
                 _ui.update { it.copy(statusMessage = "ERR: ${e.message?.take(40)}") }
+                engine.stop()
                 srv.stop(); server = null
             }
         }
     }
 
     fun stopStreaming() {
+        restartJob?.cancel(); restartJob = null
+        recordingStartJob?.cancel()
         stopRecording()
         engine.stop()
         server?.stop(); server = null
@@ -538,41 +602,114 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
     // ─────────────────────────────────────────────────────────────────────────
 
     fun startRecording() {
-        if (_ui.value.isRecording || !_ui.value.isStreaming) return
-        val sps = cachedSps ?: run { _ui.update { it.copy(statusMessage = "ERR: No SPS/PPS yet") }; return }
-        val pps = cachedPps ?: return
+        if (_ui.value.isRecording || !_ui.value.isStreaming || recordingStartJob?.isActive == true) return
 
-        val rec = RecordingSession(getApplication())
-        rec.configure(
-            sps    = sps, pps = pps,
-            width  = engine.captureSize.width,
-            height = engine.captureSize.height,
-        )
-        rec.onDurationMs = { ms -> _ui.update { it.copy(recordingMs = ms) } }
-
-        // Intercept encoder output: pass to both StreamServer AND muxer
-        val streamCallback = engine.onEncodedData
-        engine.onEncodedData = { data, info ->
-            streamCallback?.invoke(data, info)
-            rec.offerFrame(data, info)
+        if (
+            Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(
+                getApplication(),
+                Manifest.permission.WRITE_EXTERNAL_STORAGE,
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            _ui.update {
+                it.copy(
+                    needsLegacyStoragePermission = true,
+                    statusMessage = "Storage permission needed for recording",
+                )
+            }
+            return
         }
 
-        rec.start()
-        recording = rec
-        _ui.update { it.copy(isRecording = true, recordingMs = 0L) }
+        val sps = cachedSps ?: run { _ui.update { it.copy(statusMessage = "ERR: No SPS/PPS yet") }; return }
+        val pps = cachedPps ?: run { _ui.update { it.copy(statusMessage = "ERR: No SPS/PPS yet") }; return }
+        val state = _ui.value
+        val width = engine.captureSize.width
+        val height = engine.captureSize.height
+
+        recordingStartJob = viewModelScope.launch(Dispatchers.IO) {
+            val rec = RecordingSession(getApplication())
+            var attached = false
+            try {
+                rec.configure(
+                    sps = sps,
+                    pps = pps,
+                    width = width,
+                    height = height,
+                    fps = state.preset.fps,
+                    bitrateMbps = state.preset.bitrateMbps,
+                )
+                rec.onDurationMs = { ms -> _ui.update { it.copy(recordingMs = ms) } }
+                rec.start()
+
+                attached = withContext(Dispatchers.Main) {
+                    if (!_ui.value.isStreaming || recording != null) {
+                        false
+                    } else {
+                        val streamCallback = engine.onEncodedData
+                        engine.onEncodedData = { data, info ->
+                            streamCallback?.invoke(data, info)
+                            rec.offerFrame(data, info)
+                        }
+                        recording = rec
+                        _ui.update {
+                            it.copy(
+                                isRecording = true,
+                                recordingMs = 0L,
+                                statusMessage = if (it.clientConnected) "CLIENT_CONNECTED" else "WAITING_CLIENT",
+                            )
+                        }
+                        engine.requestKeyFrame()
+                        true
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _ui.update { it.copy(statusMessage = "ERR: Recording ${e.message?.take(32)}") }
+                }
+            } finally {
+                val finishingJob = kotlinx.coroutines.currentCoroutineContext()[Job]
+                if (!attached) rec.stop()
+                withContext(NonCancellable + Dispatchers.Main) {
+                    if (recordingStartJob === finishingJob) {
+                        recordingStartJob = null
+                    }
+                }
+            }
+        }
     }
 
-    fun stopRecording() {
-        val rec = recording ?: return
+    fun onLegacyStoragePermissionResult(granted: Boolean) {
+        _ui.update { it.copy(needsLegacyStoragePermission = false) }
+        if (granted) {
+            startRecording()
+        } else {
+            _ui.update { it.copy(statusMessage = "ERR: Storage permission denied") }
+        }
+    }
+
+    fun stopRecording() = stopRecording(afterStop = null)
+
+    private fun stopRecording(afterStop: (() -> Unit)?) {
+        val rec = recording
+        if (rec == null) {
+            afterStop?.invoke()
+            return
+        }
         recording = null
         // Restore streaming-only encoder callback
         val srv = server
         engine.onEncodedData = if (srv != null) { data, info -> srv.offerEncodedData(data, info) } else null
-        val file = rec.stop()
-        _ui.update { it.copy(
-            isRecording       = false,
-            lastRecordingPath = file?.absolutePath ?: "",
-        )}
+        _ui.update { it.copy(isRecording = false) }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val location = rec.stop()
+            withContext(Dispatchers.Main) {
+                _ui.update { it.copy(lastRecordingPath = location ?: "") }
+                afterStop?.invoke()
+            }
+        }
     }
 
 
@@ -636,7 +773,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         engine.activeArFilter = filterName
         val isZeroCopy = filterName == "None" && _ui.value.activeLutFilter == "None"
         if (wasZeroCopy != isZeroCopy) {
-            engine.activePreviewSurface?.let { restartCameraEngine(it) }
+            previewSurface?.let { restartAfterRecording(it) }
         }
     }
 
@@ -646,7 +783,7 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         engine.activeLutFilter = filterName
         val isZeroCopy = _ui.value.activeArFilter == "None" && filterName == "None"
         if (wasZeroCopy != isZeroCopy) {
-            engine.activePreviewSurface?.let { restartCameraEngine(it) }
+            previewSurface?.let { restartAfterRecording(it) }
         }
     }
 
@@ -671,6 +808,35 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectUsb()               = _ui.update { it.copy(mode = ConnectionMode.Usb) }
     fun selectWifi(ip: String)    = _ui.update { it.copy(mode = ConnectionMode.WiFi(ip), wifiIp = ip) }
+    fun setPairingKey(value: String) {
+        pairingEdited.set(true)
+        val normalized = value.uppercase()
+            .filter { it in '0'..'9' || it in 'A'..'F' }
+            .take(32)
+        _ui.update { it.copy(pairingKey = normalized) }
+        pairingSaveJob?.cancel()
+        if (normalized.length == 32) {
+            pairingSaveJob = viewModelScope.launch(Dispatchers.IO) {
+                kotlinx.coroutines.delay(250)
+                runCatching { PairingKeyStore.save(getApplication(), normalized) }
+                    .onFailure { error ->
+                        _ui.update { it.copy(statusMessage = "ERR: Pairing key storage ${error.message?.take(24)}") }
+                    }
+            }
+        }
+    }
+
+    fun clearPairingKey() {
+        pairingEdited.set(true)
+        pairingSaveJob?.cancel()
+        pairingSaveJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching { PairingKeyStore.clear(getApplication()) }
+                .onFailure { error ->
+                    _ui.update { it.copy(statusMessage = "ERR: Pairing key storage ${error.message?.take(24)}") }
+                }
+        }
+        _ui.update { it.copy(pairingKey = "") }
+    }
     fun setShowIpDialog(v: Boolean) = _ui.update { it.copy(showIpDialog = v) }
     fun toggleControlPanel()      = _ui.update { it.copy(controlPanelExpanded = !it.controlPanelExpanded) }
     fun onPermissionDenied()      = _ui.update { it.copy(statusMessage = "CAMERA PERMISSION DENIED") }
@@ -702,5 +868,17 @@ class SticamViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(isScreenOffMode = enabled) }
     }
 
-    override fun onCleared() { stopStreaming(); super.onCleared() }
+    override fun onCleared() {
+        restartJob?.cancel()
+        recordingStartJob?.cancel()
+        pairingSaveJob?.cancel()
+        val activeRecording = recording
+        recording = null
+        engine.onEncodedData = null
+        server?.stop()
+        server = null
+        engine.stop()
+        runCatching { activeRecording?.stop() }
+        super.onCleared()
+    }
 }

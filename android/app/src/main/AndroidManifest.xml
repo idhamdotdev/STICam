@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+    >
 
     <!-- Camera access for the encoding pipeline -->
     <uses-permission android:name="android.permission.CAMERA" />
@@ -10,23 +10,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
-    <!-- Keep CPU/screen alive during streaming -->
-    <uses-permission android:name="android.permission.WAKE_LOCK" />
-
     <!-- MP4 recording to Movies/STICam/ -->
     <!-- API ≤28: needs WRITE_EXTERNAL_STORAGE for direct file writes       -->
     <!-- API 29+: no permission needed for Environment.DIRECTORY_MOVIES     -->
-    <!-- API 33+: READ_MEDIA_VIDEO to read back saved clips                 -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
-    <uses-permission
-        android:name="android.permission.READ_MEDIA_VIDEO"
-        tools:targetApi="33" />
-
-    <!-- Foreground service keeps streaming alive when app is backgrounded -->
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
     <!-- Declare camera hardware requirement -->
     <uses-feature
         android:name="android.hardware.camera"

@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Security.Cryptography;
 using System.Windows.Forms;
 
 namespace SticamHost
@@ -14,16 +15,26 @@ namespace SticamHost
             Application.SetHighDpiMode(HighDpiMode.SystemAware);
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
-            Application.Run(new MainForm());
+            try
+            {
+                Application.Run(new MainForm());
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    $"STICam could not start: {ex.Message}",
+                    "Startup Error",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
         }
 
         private static void ExtractResources()
         {
             try
             {
-                string tempDir = Path.Combine(Path.GetTempPath(), "STICamHost");
-                Directory.CreateDirectory(Path.Combine(tempDir, "tools"));
-                Directory.CreateDirectory(Path.Combine(tempDir, "fonts"));
+                Directory.CreateDirectory(RuntimePaths.ToolsDirectory);
+                Directory.CreateDirectory(RuntimePaths.FontsDirectory);
 
                 var assembly = typeof(Program).Assembly;
                 string[] resourceNames = assembly.GetManifestResourceNames();
@@ -31,21 +42,15 @@ namespace SticamHost
                 foreach (var name in resourceNames)
                 {
                     if (name.EndsWith("adb.exe", StringComparison.OrdinalIgnoreCase))
-                        ExtractResource(assembly, name, Path.Combine(tempDir, "tools", "adb.exe"));
+                        ExtractResource(assembly, name, Path.Combine(RuntimePaths.ToolsDirectory, "adb.exe"));
                     else if (name.EndsWith("AdbWinApi.dll", StringComparison.OrdinalIgnoreCase))
-                        ExtractResource(assembly, name, Path.Combine(tempDir, "tools", "AdbWinApi.dll"));
+                        ExtractResource(assembly, name, Path.Combine(RuntimePaths.ToolsDirectory, "AdbWinApi.dll"));
                     else if (name.EndsWith("AdbWinUsbApi.dll", StringComparison.OrdinalIgnoreCase))
-                        ExtractResource(assembly, name, Path.Combine(tempDir, "tools", "AdbWinUsbApi.dll"));
+                        ExtractResource(assembly, name, Path.Combine(RuntimePaths.ToolsDirectory, "AdbWinUsbApi.dll"));
                     else if (name.EndsWith("ffmpeg.exe", StringComparison.OrdinalIgnoreCase))
-                        ExtractResource(assembly, name, Path.Combine(tempDir, "tools", "ffmpeg.exe"));
-                    else if (name.EndsWith("obs-virtualcam-module64.dll", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string targetPath = Path.Combine(tempDir, "tools", "obs-virtualcam-module64.dll");
-                        ExtractResource(assembly, name, targetPath);
-                        RegisterVirtualCamera(targetPath);
-                    }
+                        ExtractResource(assembly, name, Path.Combine(RuntimePaths.ToolsDirectory, "ffmpeg.exe"));
                     else if (name.EndsWith("Lalezar-Regular.ttf", StringComparison.OrdinalIgnoreCase))
-                        ExtractResource(assembly, name, Path.Combine(tempDir, "fonts", "Lalezar-Regular.ttf"));
+                        ExtractResource(assembly, name, Path.Combine(RuntimePaths.FontsDirectory, "Lalezar-Regular.ttf"));
                 }
             }
             catch (Exception ex)
@@ -54,68 +59,44 @@ namespace SticamHost
             }
         }
 
-        private static void RegisterVirtualCamera(string dllPath)
-        {
-            try
-            {
-                // 1. COM CLSID Entry
-                string clsidPath = @"Software\Classes\CLSID\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}";
-                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(clsidPath))
-                {
-                    key.SetValue("", "STICam Camera");
-                }
-                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(clsidPath + @"\InprocServer32"))
-                {
-                    key.SetValue("", dllPath);
-                    key.SetValue("ThreadingModel", "Both");
-                }
-
-                // 2. DirectShow Category Instance Entry
-                string instancePath = @"Software\Classes\CLSID\{860BB310-5D01-11d0-BD3B-00A0C911CE86}\Instance\{A3FCE0F5-3493-419F-958A-ABA1250EC20B}";
-                using (var key = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(instancePath))
-                {
-                    key.SetValue("FriendlyName", "STICam Camera");
-                    key.SetValue("CLSID", "{A3FCE0F5-3493-419F-958A-ABA1250EC20B}");
-
-                    // Standard FilterData for OBS Virtual Camera (DirectShow format)
-                    byte[] filterData = new byte[] {
-                        0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x30, 0x70, 0x69, 0x6e, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
-                        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x65, 0x76, 0x79, 0x30, 0x00, 0x00, 0x00,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x30, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-                        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
-                    };
-                    key.SetValue("FilterData", filterData, Microsoft.Win32.RegistryValueKind.Binary);
-                }
-            }
-            catch (Exception)
-            {
-                // Silent fail if registry writes fail (e.g. read-only permissions in sandboxes)
-            }
-        }
-
         private static void ExtractResource(System.Reflection.Assembly assembly, string resourceName, string targetPath)
         {
-            try
-            {
-                if (File.Exists(targetPath))
-                {
-                    return;
-                }
+            using var stream = assembly.GetManifestResourceStream(resourceName)
+                ?? throw new InvalidOperationException($"Embedded resource not found: {resourceName}");
+            using var content = new MemoryStream();
+            stream.CopyTo(content);
+            byte[] bytes = content.ToArray();
+            byte[] expectedHash = SHA256.HashData(bytes);
 
-                using (var stream = assembly.GetManifestResourceStream(resourceName))
+            if (File.Exists(targetPath))
+            {
+                try
                 {
-                    if (stream == null) return;
-                    using (var fileStream = File.Create(targetPath))
-                    {
-                        stream.CopyTo(fileStream);
-                    }
+                    using var existing = File.OpenRead(targetPath);
+                    if (CryptographicOperations.FixedTimeEquals(expectedHash, SHA256.HashData(existing)))
+                        return;
+                }
+                catch (IOException)
+                {
+                    // Replace unreadable or partially-written files below.
                 }
             }
-            catch (Exception ex)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(targetPath)
+                ?? throw new InvalidOperationException("Resource target has no directory."));
+            string temporaryPath = targetPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
             {
-                Console.WriteLine($"Failed to extract {resourceName}: {ex.Message}");
+                using (var file = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    file.Write(bytes);
+                    file.Flush(flushToDisk: true);
+                }
+                File.Move(temporaryPath, targetPath, overwrite: true);
+            }
+            finally
+            {
+                try { File.Delete(temporaryPath); } catch { }
             }
         }
     }

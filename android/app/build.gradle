@@ -3,6 +3,14 @@ plugins {
     id 'org.jetbrains.kotlin.android'
 }
 
+def releaseSigning = [
+    storeFile: System.getenv('STICAM_ANDROID_KEYSTORE'),
+    storePassword: System.getenv('STICAM_ANDROID_STORE_PASSWORD'),
+    keyAlias: System.getenv('STICAM_ANDROID_KEY_ALIAS'),
+    keyPassword: System.getenv('STICAM_ANDROID_KEY_PASSWORD')
+]
+def hasReleaseSigning = releaseSigning.values().every { it != null && !it.trim().isEmpty() }
+
 android {
     namespace 'com.sticam'
     compileSdk 34
@@ -24,7 +32,14 @@ android {
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            signingConfig signingConfigs.debug
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.create('release') {
+                    storeFile file(releaseSigning.storeFile)
+                    storePassword releaseSigning.storePassword
+                    keyAlias releaseSigning.keyAlias
+                    keyPassword releaseSigning.keyPassword
+                }
+            }
         }
         debug {
             applicationIdSuffix ".debug"
@@ -53,6 +68,19 @@ android {
         resources {
             excludes += '/META-INF/{AL2.0,LGPL2.1}'
         }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def requestsReleaseArtifact = graph.allTasks.any {
+        it.project == project && it.name.toLowerCase().matches('.*(assemble|bundle|package|publish).*release.*')
+    }
+    if (requestsReleaseArtifact && !hasReleaseSigning) {
+        throw new GradleException(
+            'Release signing is required. Set STICAM_ANDROID_KEYSTORE, ' +
+            'STICAM_ANDROID_STORE_PASSWORD, STICAM_ANDROID_KEY_ALIAS, and ' +
+            'STICAM_ANDROID_KEY_PASSWORD in the protected build environment.'
+        )
     }
 }
 
@@ -86,6 +114,8 @@ dependencies {
 
     // ── Coroutines ────────────────────────────────────────────────────────────
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3'
+
+    testImplementation 'junit:junit:4.13.2'
 
     // ── Debug tools ───────────────────────────────────────────────────────────
     debugImplementation 'androidx.compose.ui:ui-tooling'

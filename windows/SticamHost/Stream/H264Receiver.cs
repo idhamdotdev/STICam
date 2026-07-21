@@ -1,169 +1,208 @@
 using System;
-using System.Buffers.Binary;
-using System.Drawing;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.IO;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
+using SticamHost.Security;
 
 namespace SticamHost.Stream
 {
-    // ── Typed-packet constants (must match Android StreamServer) ──────────────
-
     internal static class PacketType
     {
         public const byte Frame = 0x00;
-        public const byte Sps   = 0x01;
-        public const byte Pps   = 0x02;
-        public const byte Cmd   = 0x10;
+        public const byte Sps = 0x01;
+        public const byte Pps = 0x02;
+        public const byte Cmd = 0x10;
     }
 
-    // ── Camera parameter snapshot (sent back to Android) ─────────────────────
-
-    public record CameraParams(
-        int   Iso,
-        long  ShutterNs,
-        float FocusDiopters,
-        int   WbKelvin
-    );
-
-    // ── Per-frame callback ────────────────────────────────────────────────────
+    public record CameraParams(int Iso, long ShutterNs, float FocusDiopters, int WbKelvin);
 
     public sealed class FrameEventArgs : EventArgs
     {
-        public required byte[] Data        { get; init; }
-        public          bool   IsKeyFrame  { get; init; }
-        public          long   PtsUs       { get; init; }
+        public required byte[] Data { get; init; }
+        public bool IsKeyFrame { get; init; }
+        public long PtsUs { get; init; }
     }
 
     /// <summary>
-    /// Sticam stream receiver — connects to the Android Sticam Node as a TCP
-    /// client and processes the typed-packet stream.
-    ///
-    /// Upstream (Android → Windows): SPS | PPS | Frame packets
-    /// Downstream (Windows → Android): JSON control commands
-    ///
-    /// This class handles the network loop only. Frame decoding and rendering
-    /// is done by the caller (VideoDecoder / WinForms PictureBox).
+    /// Listens for the Android TCP client and processes the typed-packet stream.
+    /// Outgoing control writes are coalesced and serialized by one background writer.
     /// </summary>
     public sealed class H264Receiver : IDisposable
     {
+        private const int MaxFrameLength = 16 * 1024 * 1024;
+        private const int MaxConfigLength = 1024 * 1024;
+        private const int MaxCommandLength = 64 * 1024;
+        private static readonly TimeSpan FirstRecordTimeout = TimeSpan.FromSeconds(10);
+
         public readonly string Host;
-        public readonly int    Port;
+        public readonly int Port;
+        private readonly string _pairingKey;
 
-        private TcpListener?          _listener;
-        private TcpClient?            _tcp;
-        private NetworkStream?        _net;
+        private readonly object _stateLock = new();
+        private readonly ConcurrentDictionary<string, object> _pendingParams = new();
+        private readonly ConcurrentQueue<string> _pendingCommands = new();
+        private readonly Channel<byte> _writeSignal = Channel.CreateBounded<byte>(
+            new BoundedChannelOptions(1)
+            {
+                FullMode = BoundedChannelFullMode.DropWrite,
+                SingleReader = true,
+                SingleWriter = false,
+            });
+
+        private TcpListener? _listener;
+        private TcpClient? _tcp;
+        private NetworkStream? _net;
         private CancellationTokenSource? _cts;
-
-        // Codec config received from device
+        private Task? _receiveTask;
         private byte[]? _sps;
         private byte[]? _pps;
+        private long _framesReceived;
+        private long _bytesReceived;
+        private bool _disposed;
 
-        // ── Events ────────────────────────────────────────────────────────────
-
-        /// <summary>Raised when SPS + PPS have been received and buffered.</summary>
-        public event Action<byte[], byte[]>? OnConfigReceived;  // sps, pps
-
-        /// <summary>Raised for each encoded video frame received.</summary>
+        public event Action<byte[], byte[]>? OnConfigReceived;
         public event EventHandler<FrameEventArgs>? OnFrameReceived;
-
-        /// <summary>Connection state changes.</summary>
-        public event Action<bool>?   OnConnectionChanged;  // true=connected
+        public event Action<bool>? OnConnectionChanged;
         public event Action<string>? OnLog;
-
-        /// <summary>Raised when a custom command is received from the device.</summary>
         public event Action<string>? OnCommandReceived;
 
+        public long FramesReceived => Interlocked.Read(ref _framesReceived);
+        public long BytesReceived => Interlocked.Read(ref _bytesReceived);
 
-        // ── Stats ─────────────────────────────────────────────────────────────
-        public long FramesReceived { get; private set; }
-        public long BytesReceived  { get; private set; }
-
-        public H264Receiver(string host, int port = 8765)
+        public H264Receiver(string host, string pairingKey, int port = 8765)
         {
             Host = host;
+            _pairingKey = pairingKey;
             Port = port;
         }
 
-        // ── Public API ────────────────────────────────────────────────────────
-
         public void Connect()
         {
-            _cts = new CancellationTokenSource();
-            Task.Run(() => ReceiveLoop(_cts.Token));
+            lock (_stateLock)
+            {
+                ObjectDisposedException.ThrowIf(_disposed, this);
+                if (_receiveTask is { IsCompleted: false }) return;
+
+                _cts?.Dispose();
+                var cts = new CancellationTokenSource();
+                _cts = cts;
+                _receiveTask = Task.Run(() => ReceiveLoopAsync(cts.Token));
+            }
         }
 
         public void Disconnect()
         {
-            _cts?.Cancel();
+            CancellationTokenSource? cts;
+            Task? receiveTask;
+            lock (_stateLock)
+            {
+                cts = _cts;
+                _cts = null;
+                receiveTask = _receiveTask;
+            }
+            cts?.Cancel();
             try { _listener?.Stop(); } catch { }
-            _net?.Close();
-            _tcp?.Close();
-        }
-
-        public void Dispose() => Disconnect();
-
-        /// <summary>
-        /// Sends a JSON control command to the Android device (downstream).
-        /// Serializes CameraParams into the command payload:
-        ///   {"cmd":"set_params","iso":...,"shutterNs":...,"focusDiopters":...,"wbKelvin":...}
-        /// </summary>
-        public void SendCameraParams(CameraParams p)
-        {
-            var json = JsonSerializer.Serialize(new
+            try { _net?.Close(); } catch { }
+            try { _tcp?.Close(); } catch { }
+            if (receiveTask != null && receiveTask.Id != Task.CurrentId)
             {
-                cmd            = "set_params",
-                iso            = p.Iso,
-                shutterNs      = p.ShutterNs,
-                focusDiopters  = p.FocusDiopters,
-                wbKelvin       = p.WbKelvin,
-            });
-            SendCommand(json);
-        }
-
-        public void SendFaceTracking(bool enabled)
-        {
-            var json = JsonSerializer.Serialize(new
+                try { receiveTask.GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) { }
+                catch (ObjectDisposedException) { }
+                catch (IOException) { }
+                catch (SocketException) { }
+                catch (Exception ex) { Log($"Receiver shutdown: {ex.Message}"); }
+            }
+            cts?.Dispose();
+            lock (_stateLock)
             {
-                cmd           = "set_params",
-                face_tracking = enabled
-            });
-            SendCommand(json);
+                if (_receiveTask == receiveTask) _receiveTask = null;
+            }
         }
 
-        public void SendCameraControl(int? iso, float? brightness, float? focus, float? zoom = null, bool? flash = null, string? cameraId = null, string? resolution = null, string? arFilter = null, string? lutFilter = null)
+        public void Dispose()
         {
-            var payload = new System.Collections.Generic.Dictionary<string, object>
+            lock (_stateLock)
             {
-                { "cmd", "set_params" }
-            };
-            if (iso.HasValue) payload["iso"] = iso.Value;
-            if (brightness.HasValue) payload["brightness"] = brightness.Value;
-            if (focus.HasValue) payload["focus"] = focus.Value;
-            if (zoom.HasValue) payload["zoom"] = zoom.Value;
-            if (flash.HasValue) payload["flash"] = flash.Value;
-            if (!string.IsNullOrEmpty(cameraId)) payload["camera_id"] = cameraId;
-            if (!string.IsNullOrEmpty(resolution)) payload["resolution"] = resolution;
-            if (!string.IsNullOrEmpty(arFilter)) payload["ar_filter"] = arFilter;
-            if (!string.IsNullOrEmpty(lutFilter)) payload["lut_filter"] = lutFilter;
-
-            var json = JsonSerializer.Serialize(payload);
-            SendCommand(json);
+                if (_disposed) return;
+                _disposed = true;
+            }
+            Disconnect();
         }
 
-        public void RequestKeyFrame() => SendCommand("{\"cmd\":\"request_idr\"}");
-
-        // ── Receive loop ──────────────────────────────────────────────────────
-
-        private async Task ReceiveLoop(CancellationToken ct)
+        public void SendCameraParams(CameraParams p) => QueueParameters(new Dictionary<string, object>
         {
+            ["iso"] = p.Iso,
+            ["shutterNs"] = p.ShutterNs,
+            ["focus"] = p.FocusDiopters,
+            ["wbKelvin"] = p.WbKelvin,
+        });
+
+        public void SendFaceTracking(bool enabled) => QueueParameters(new Dictionary<string, object>
+        {
+            ["face_tracking"] = enabled,
+        });
+
+        public void SendCameraControl(
+            int? iso,
+            float? brightness,
+            float? focus,
+            float? zoom = null,
+            bool? flash = null,
+            string? cameraId = null,
+            string? resolution = null,
+            string? arFilter = null,
+            string? lutFilter = null)
+        {
+            var parameters = new Dictionary<string, object>();
+            if (iso.HasValue) parameters["iso"] = iso.Value;
+            if (brightness.HasValue) parameters["brightness"] = brightness.Value;
+            if (focus.HasValue) parameters["focus"] = focus.Value;
+            if (zoom.HasValue) parameters["zoom"] = zoom.Value;
+            if (flash.HasValue) parameters["flash"] = flash.Value;
+            if (!string.IsNullOrEmpty(cameraId)) parameters["camera_id"] = cameraId;
+            if (!string.IsNullOrEmpty(resolution)) parameters["resolution"] = resolution;
+            if (!string.IsNullOrEmpty(arFilter)) parameters["ar_filter"] = arFilter;
+            if (!string.IsNullOrEmpty(lutFilter)) parameters["lut_filter"] = lutFilter;
+            QueueParameters(parameters);
+        }
+
+        public void RequestKeyFrame()
+        {
+            _pendingCommands.Enqueue("{\"cmd\":\"request_idr\"}");
+            SignalWriter();
+        }
+
+        private void QueueParameters(IReadOnlyDictionary<string, object> parameters)
+        {
+            foreach (var pair in parameters)
+                _pendingParams[pair.Key] = pair.Value;
+            SignalWriter();
+        }
+
+        private void SignalWriter() => _writeSignal.Writer.TryWrite(0);
+
+        private async Task ReceiveLoopAsync(CancellationToken ct)
+        {
+            IPAddress bindAddress;
+            if (!IPAddress.TryParse(Host, out bindAddress!))
+            {
+                Log($"Invalid local bind address: {Host}");
+                OnConnectionChanged?.Invoke(false);
+                return;
+            }
+
             try
             {
-                Log($"Starting TCP Listener on port {Port}…");
-                _listener = new TcpListener(System.Net.IPAddress.Any, Port);
+                Log($"Starting TCP listener on {bindAddress}:{Port}...");
+                _listener = new TcpListener(bindAddress, Port);
                 _listener.Start();
             }
             catch (Exception ex)
@@ -173,156 +212,191 @@ namespace SticamHost.Stream
                 return;
             }
 
-            using (ct.Register(() => _listener.Stop()))
+            try
             {
                 while (!ct.IsCancellationRequested)
                 {
+                    bool connected = false;
+                    using var connectionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     try
                     {
                         Log("Waiting for connection...");
-                        _tcp = await _listener.AcceptTcpClientAsync(ct);
+                        _tcp = await _listener.AcceptTcpClientAsync(ct).ConfigureAwait(false);
                         _tcp.NoDelay = true;
                         _tcp.ReceiveBufferSize = 4 * 1024 * 1024;
                         _net = _tcp.GetStream();
-                        _sps = null; _pps = null;
-                        FramesReceived = 0; BytesReceived = 0;
+                        await using var secure = await SecureChannel.AcceptAsync(
+                            _net,
+                            _pairingKey,
+                            connectionCts.Token).ConfigureAwait(false);
+                        using var firstRecordCts = CancellationTokenSource.CreateLinkedTokenSource(
+                            connectionCts.Token);
+                        firstRecordCts.CancelAfter(FirstRecordTimeout);
+                        SecurePacket firstPacket = await secure.ReceiveAsync(
+                            firstRecordCts.Token).ConfigureAwait(false);
+                        _sps = null;
+                        _pps = null;
+                        Interlocked.Exchange(ref _framesReceived, 0);
+                        Interlocked.Exchange(ref _bytesReceived, 0);
 
+                        connected = true;
                         OnConnectionChanged?.Invoke(true);
-                        Log("Client connected");
+                        Log($"Client connected: {_tcp.Client.RemoteEndPoint}");
 
-                        await ReadPackets(ct);
+                        Task writerTask = CommandWriterLoopAsync(secure, connectionCts.Token);
+                        Task readerTask = ReadPacketsAsync(
+                            secure,
+                            firstPacket,
+                            connectionCts.Token);
+                        try
+                        {
+                            Task completed = await Task.WhenAny(readerTask, writerTask).ConfigureAwait(false);
+                            await completed.ConfigureAwait(false);
+                        }
+                        finally
+                        {
+                            connectionCts.Cancel();
+                            try { _net?.Close(); } catch { }
+                            try { await Task.WhenAll(readerTask, writerTask).ConfigureAwait(false); }
+                            catch (OperationCanceledException) { }
+                            catch when (readerTask.IsFaulted || writerTask.IsFaulted) { }
+                        }
                     }
-                    catch (OperationCanceledException) { break; }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
                     catch (Exception ex)
                     {
                         if (!ct.IsCancellationRequested)
-                        {
                             Log($"Connection error: {ex.Message}");
-                        }
-                        OnConnectionChanged?.Invoke(false);
                     }
                     finally
                     {
-                        _net?.Close(); _tcp?.Close();
+                        try { _net?.Close(); } catch { }
+                        try { _tcp?.Close(); } catch { }
+                        _net = null;
+                        _tcp = null;
+                        if (connected) OnConnectionChanged?.Invoke(false);
                     }
                 }
             }
-            OnConnectionChanged?.Invoke(false);
+            finally
+            {
+                try { _listener.Stop(); } catch { }
+                _listener = null;
+            }
         }
 
-        private async Task ReadPackets(CancellationToken ct)
+        private async Task ReadPacketsAsync(
+            SecureChannel secure,
+            SecurePacket firstPacket,
+            CancellationToken ct)
         {
-            var hdr = new byte[5]; // [type(1)] [length(4)]
-
+            ProcessPacket(firstPacket);
             while (!ct.IsCancellationRequested)
             {
-                await ReadFully(_net!, hdr, ct);
-                byte type = hdr[0];
-                int  len  = ReadBigEndianInt32(hdr, 1);
+                SecurePacket packet = await secure.ReceiveAsync(ct).ConfigureAwait(false);
+                ProcessPacket(packet);
+            }
+        }
 
-                if (len is <= 0 or > 50_000_000)
-                    throw new InvalidDataException($"Bad packet length: {len}");
+        private void ProcessPacket(SecurePacket packet)
+        {
+            byte type = packet.Type;
+            byte[] data = packet.Payload;
+            int len = data.Length;
+            int limit = type switch
+            {
+                PacketType.Frame => MaxFrameLength,
+                PacketType.Sps or PacketType.Pps => MaxConfigLength,
+                PacketType.Cmd => MaxCommandLength,
+                _ => MaxCommandLength,
+            };
+            if (len is <= 0 || len > limit)
+                throw new InvalidDataException($"Bad packet length {len} for type 0x{type:X2}");
 
-                var data = new byte[len];
-                await ReadFully(_net!, data, ct);
-                BytesReceived += len;
+            Interlocked.Add(ref _bytesReceived, len);
 
-                switch (type)
-                {
-                    case PacketType.Sps:
-                        _sps = data;
-                        Log($"SPS received: {len}B");
-                        TryRaiseConfig();
-                        break;
-
-                    case PacketType.Pps:
-                        _pps = data;
-                        Log($"PPS received: {len}B");
-                        TryRaiseConfig();
-                        break;
-
-                    case PacketType.Frame:
-                        FramesReceived++;
-                        OnFrameReceived?.Invoke(this, new FrameEventArgs
-                        {
-                            Data       = data,
-                            IsKeyFrame = IsKeyFrame(data),
-                            PtsUs      = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000,
-                        });
-                        break;
-
-                    case PacketType.Cmd:
-                        OnCommandReceived?.Invoke(Encoding.UTF8.GetString(data));
-                        break;
-
-                    default:
-                        Log($"Unknown packet type 0x{type:X2}, skipping {len}B");
-                        break;
-                }
+            switch (type)
+            {
+                case PacketType.Sps:
+                    _sps = data;
+                    _pps = null;
+                    Log($"SPS received: {len}B");
+                    break;
+                case PacketType.Pps:
+                    _pps = data;
+                    Log($"PPS received: {len}B");
+                    TryRaiseConfig();
+                    break;
+                case PacketType.Frame:
+                    Interlocked.Increment(ref _framesReceived);
+                    OnFrameReceived?.Invoke(this, new FrameEventArgs
+                    {
+                        Data = data,
+                        IsKeyFrame = ContainsIdr(data),
+                        PtsUs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() * 1000,
+                    });
+                    break;
+                case PacketType.Cmd:
+                    OnCommandReceived?.Invoke(Encoding.UTF8.GetString(data));
+                    break;
+                default:
+                    Log($"Unknown packet type 0x{type:X2}, skipped {len}B");
+                    break;
             }
         }
 
         private void TryRaiseConfig()
         {
             if (_sps != null && _pps != null)
-            {
-                Log($"Config complete — raising OnConfigReceived");
                 OnConfigReceived?.Invoke(_sps, _pps);
-            }
         }
 
-        // ── Control command sender ────────────────────────────────────────────
-
-        private void SendCommand(string json)
+        private async Task CommandWriterLoopAsync(SecureChannel secure, CancellationToken ct)
         {
-            var net = _net;
-            if (net == null) return;
-            try
+            while (await _writeSignal.Reader.WaitToReadAsync(ct).ConfigureAwait(false))
             {
-                var payload = Encoding.UTF8.GetBytes(json);
-                var hdr = new byte[5];
-                hdr[0] = PacketType.Cmd;
-                BinaryPrimitives.WriteInt32BigEndian(hdr.AsSpan(1), payload.Length);
-                lock (net)
+                while (_writeSignal.Reader.TryRead(out _)) { }
+
+                while (_pendingCommands.TryDequeue(out string? command))
+                    await WriteCommandAsync(secure, command, ct).ConfigureAwait(false);
+
+                if (!_pendingParams.IsEmpty)
                 {
-                    net.Write(hdr);
-                    net.Write(payload);
-                    net.Flush();
+                    var payload = new Dictionary<string, object> { ["cmd"] = "set_params" };
+                    foreach (var pair in _pendingParams)
+                    {
+                        if (_pendingParams.TryRemove(pair.Key, out object? value))
+                            payload[pair.Key] = value;
+                    }
+                    if (payload.Count > 1)
+                        await WriteCommandAsync(secure, JsonSerializer.Serialize(payload), ct).ConfigureAwait(false);
                 }
-                Log($"CMD sent: {json}");
             }
-            catch (Exception ex) { Log($"CMD send error: {ex.Message}"); }
         }
 
-        // ── Helpers ───────────────────────────────────────────────────────────
-
-        private static async Task ReadFully(System.IO.Stream s, byte[] buf, CancellationToken ct)
+        private async Task WriteCommandAsync(SecureChannel secure, string json, CancellationToken ct)
         {
-            int off = 0;
-            while (off < buf.Length)
+            byte[] payload = Encoding.UTF8.GetBytes(json);
+            if (payload.Length > MaxCommandLength)
+                throw new InvalidDataException("Command payload is too large.");
+            await secure.SendAsync(PacketType.Cmd, payload, ct).ConfigureAwait(false);
+            Log($"CMD sent: {json}");
+        }
+
+        internal static bool ContainsIdr(ReadOnlySpan<byte> data)
+        {
+            for (int i = 0; i + 3 < data.Length; i++)
             {
-                int n = await s.ReadAsync(buf, off, buf.Length - off, ct);
-                if (n == 0) throw new EndOfStreamException();
-                off += n;
+                int nalOffset = -1;
+                if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1)
+                    nalOffset = i + 3;
+                else if (i + 4 < data.Length && data[i] == 0 && data[i + 1] == 0 &&
+                         data[i + 2] == 0 && data[i + 3] == 1)
+                    nalOffset = i + 4;
+
+                if (nalOffset >= 0 && nalOffset < data.Length && (data[nalOffset] & 0x1F) == 5)
+                    return true;
             }
-        }
-
-        private static int ReadBigEndianInt32(byte[] b, int off) =>
-            (b[off] << 24) | (b[off+1] << 16) | (b[off+2] << 8) | b[off+3];
-
-        /// <summary>
-        /// Heuristic: returns true if the buffer starts with a start code
-        /// followed by a NAL type 5 (IDR slice).
-        /// </summary>
-        private static bool IsKeyFrame(byte[] data)
-        {
-            if (data.Length < 5) return false;
-            // 00 00 00 01 [NAL header]
-            if (data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1)
-                return (data[4] & 0x1F) == 5;
-            // 00 00 01 [NAL header]
-            if (data[0] == 0 && data[1] == 0 && data[2] == 1)
-                return (data[3] & 0x1F) == 5;
             return false;
         }
 

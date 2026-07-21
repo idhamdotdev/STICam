@@ -15,6 +15,8 @@ Always run Android commands from the `android/` directory using the Gradle Wrapp
 - **Run Android Tests**: `cd android && ./gradlew.bat test` (Unit tests) or `./gradlew.bat connectedAndroidTest` (Instrumented tests)
 - **Clean Project**: `cd android && ./gradlew.bat clean`
 
+Android JVM tests cover packet parsing, congestion recovery, and cross-platform secure-channel vectors. Keep the test tasks in CI and add tests with behavior changes. An `assembleRelease` result is not publishable until production signing is configured; never distribute an APK signed by the debug configuration as an official release.
+
 ### Windows Host Project (`windows/SticamHost/`)
 Always run .NET commands from the `windows/SticamHost/` directory.
 - **Restore Packages**: `cd windows/SticamHost && dotnet restore`
@@ -23,28 +25,46 @@ Always run .NET commands from the `windows/SticamHost/` directory.
 - **Run Application**: `cd windows/SticamHost && dotnet run`
 - **Clean Build**: `cd windows/SticamHost && dotnet clean`
 
+The Windows compile does not require locally downloaded ADB or FFmpeg files because those resources are conditional. USB, RTSP, and packaging validation do require the applicable pinned runtime inputs. The tracked Windows test runner validates protocol vectors and H.264 IDR parsing.
+
 ---
 
 ## 2. Project Architecture
 
-### Directory Structure
-- **`android/`** - Kotlin & Jetpack Compose codebase (Sticam Node / Android Transmitter)
-  - `app/src/main/java/com/sticam/` - Core source code
-    - `engine/` - Audio/video capture pipeline (`CameraEngine.kt`, `RecordingSession.kt`)
-    - `server/` - Network streaming (`StreamServer.kt`)
-    - `ui/` - Compose-based layout and views
-      - `components/` - Custom reusable HUD items (`HudComponents.kt`, `HudSlider.kt`)
-      - `theme/` - Color palettes, typography, and styling configurations (`Theme.kt`)
-      - `SticamScreen.kt` - Main interactive HUD Compose view
-      - `SticamViewModel.kt` - State holder, lifecycle engine, and user actions handler
-- **`windows/`** - C# .NET 8 WinForms codebase (Sticam Host / Receiver)
-  - `SticamHost/` - Receiver application
-    - `Adb/` - ADB port-forwarding management
-    - `Stream/` - TCP video receiver and FFmpeg H.264 frame decoder
-    - `VirtualCamera/` - Virtual webcam driver output configuration (OBS VirtualCam/RTSP)
-    - `MainForm.cs` - Main UI, preview box, and log controls
-- **`ios/`** - SticamIOS Swift-based project (future placeholder or early iOS client)
-- **`sticam_media/`** - Artifacts/design assets and icon resources
+### Runtime roles
+
+The class names are historical and can be misleading:
+
+- The **Windows host is the TCP listener** on port 8765.
+- The **Android node is the TCP client** and opens the outbound connection.
+- Wi-Fi uses the PC LAN address entered in the Android UI.
+- USB uses `adb reverse tcp:8765 tcp:8765`; Android then connects to `127.0.0.1:8765`.
+- Video travels Android to Windows. Typed JSON commands travel in both directions on the same socket.
+
+Keep [`docs/PROTOCOL.md`](docs/PROTOCOL.md) synchronized with both implementations whenever framing, packet types, commands, or fields change.
+
+### Directory structure
+
+- **`android/`** - Kotlin and Jetpack Compose Android transmitter
+  - `app/src/main/java/com/sticam/engine/` - Camera2 capture, H.264 encoding, GL processing, face tracking, and MP4 recording
+  - `app/src/main/java/com/sticam/server/StreamServer.kt` - despite its name, the outbound TCP connector, packet queue, framing, and Android command parser
+  - `app/src/main/java/com/sticam/ui/` - Compose UI and state/orchestration
+- **`windows/SticamHost/`** - C# .NET 8 WinForms receiver
+  - `Adb/` - ADB reverse-tunnel lifecycle
+  - `Stream/H264Receiver.cs` - TCP listener and typed-packet receiver/control sender
+  - `Stream/VideoDecoder.cs` - H.264 decoding
+  - `VirtualCamera/` - OBS Virtual Camera output and FFmpeg RTSP publishing
+  - `MainForm.cs` - main UI, preview, controls, and application orchestration
+- **`sticam_media/`** - tracked product icons.
+- **`docs/`** - protocol and release-engineering documentation.
+
+There is no supported or buildable iOS target. Do not describe local Swift experiments as a product platform; a future iOS target must include a reviewed Xcode project, build instructions, tests, CI, and protocol compatibility before it is added to the supported architecture.
+
+### Output limitations
+
+- OBS virtual-camera output requires a compatible installed and registered OBS Virtual Camera.
+- The RTSP path publishes to `rtsp://127.0.0.1:8554/sticam` and therefore requires a separate RTSP server already listening there.
+- Local recording is Android-side MP4 muxing of the encoded video stream.
 
 ---
 
@@ -97,7 +117,21 @@ To keep Compose codebases clean, maintainable, and high-performance, strictly ad
 
 ---
 
-## 5. Editing Hygiene
+## 5. Release and Supply-Chain Boundaries
+
+- Follow [`docs/RELEASING.md`](docs/RELEASING.md) for production artifacts.
+- Never commit keystores, passwords, PFX files, exported private keys, or secret environment files.
+- Production Android releases must use a protected production signing identity, never `signingConfigs.debug`.
+- Windows release binaries and installers must be Authenticode-signed and timestamped, then independently verified.
+- Record the version, authoritative URL, SHA-256 digest, and license for every downloaded ADB, FFmpeg, SDK, and packaging input. OBS Virtual Camera is an external compatibility prerequisite, not a bundled binary.
+- Do not silently download a latest tool during a release build.
+- Generate and publish SHA-256 checksums and an SPDX or CycloneDX SBOM for final signed artifacts.
+- Build installer and source archives only from version-controlled scripts and a clean tagged revision.
+- Source-bearing directories such as `android/app/src/main/assets/`, `ios/`, and installer definitions must never be hidden by broad ignore rules.
+
+---
+
+## 6. Editing Hygiene
 
 - **Minimal Diffs**: Restrict code edits only to the semantic changes required to implement a feature or resolve a bug.
 - **Formatting**: Do not reformat entire files. Maintain the formatting, brackets, spacing, and styling conventions of the existing file you are editing.

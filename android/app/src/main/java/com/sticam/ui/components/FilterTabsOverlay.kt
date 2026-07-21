@@ -15,15 +15,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sticam.ui.SticamUiState
-import com.sticam.ui.SticamViewModel
-
 @Composable
-fun FilterTabsOverlay(state: SticamUiState, vm: SticamViewModel) {
+fun FilterTabsOverlay(
+    activeArFilter: String,
+    activeLutFilter: String,
+    onArFilterSelected: (String) -> Unit,
+    onLutFilterSelected: (String) -> Unit,
+) {
     var activeTab by remember { mutableStateOf("AR") }
     
-    val arFilters = listOf("None", "Crown")
-    val lutFilters = listOf("None")
+    val arFilters = remember { listOf("None", "Crown") }
+    val lutFilters = remember { listOf("None") }
 
     Column(
         modifier = Modifier
@@ -55,19 +57,19 @@ fun FilterTabsOverlay(state: SticamUiState, vm: SticamViewModel) {
             contentPadding = PaddingValues(horizontal = 8.dp)
         ) {
             if (activeTab == "AR") {
-                items(arFilters) { filter ->
+                items(arFilters, key = { it }) { filter ->
                     FilterItem(
                         label = filter,
-                        isActive = state.activeArFilter == filter,
-                        onClick = { vm.setArFilter(filter) }
+                        isActive = activeArFilter == filter,
+                        onClick = { onArFilterSelected(filter) }
                     )
                 }
             } else {
-                items(lutFilters) { filter ->
+                items(lutFilters, key = { it }) { filter ->
                     FilterItem(
                         label = filter,
-                        isActive = state.activeLutFilter == filter,
-                        onClick = { vm.setLutFilter(filter) }
+                        isActive = activeLutFilter == filter,
+                        onClick = { onLutFilterSelected(filter) }
                     )
                 }
             }

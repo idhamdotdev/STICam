@@ -13,10 +13,9 @@ namespace SticamHost.VirtualCamera
     ///               Requires OBS Studio with VirtualCam plugin installed.
     ///               Detected via Windows registry scan.
     ///
-    ///   Priority 2: RTSP stream (always available)
+    ///   Priority 2: RTSP publisher (requires ffmpeg and an RTSP server on port 8554)
     ///               URL: rtsp://127.0.0.1:8554/sticam
     ///               Add as a "Media Source" in OBS, or open in VLC.
-    ///               Works without any extra software beyond bundled ffmpeg.exe.
     ///
     ///   Future:     Windows 11 22H2+ MF Virtual Camera
     ///               Will be integrated once a stable C# COM source is wired up.
@@ -38,6 +37,7 @@ namespace SticamHost.VirtualCamera
         private FfmpegPipe?          _pipe;
         private ObsVirtualCamQueue?  _vcamQueue;
         private bool                 _running;
+        private readonly object      _stateLock = new();
 
         public event Action<string>? OnLog;
         public event Action<string>? OnModeChanged;   // describes active output path
@@ -60,7 +60,10 @@ namespace SticamHost.VirtualCamera
         /// </summary>
         public string Start()
         {
-            if (_running) return ModeDetail;
+            lock (_stateLock)
+            {
+                if (_running) return ModeDetail;
+            }
 
             Log($"OS: {WindowsVersion.OsDescription}");
             Log($"MF Virtual Camera supported: {WindowsVersion.SupportsMfVirtualCamera}");
@@ -72,32 +75,45 @@ namespace SticamHost.VirtualCamera
             if (obsAvailable)
             {
                 string devName = FfmpegPipe.DetectObsVirtualCamName()!;
-                Log($"Using Standalone Virtual Camera: {devName}");
+                Log($"Using installed OBS Virtual Camera: {devName}");
 
                 _vcamQueue = new ObsVirtualCamQueue(Width, Height, Fps);
+                _vcamQueue.OnLog += Log;
                 if (_vcamQueue.Start())
                 {
                     _running   = true;
                     ActiveMode = VirtualCameraMode.ObsVirtualCam;
-                    ModeDetail = "Standalone STICam Camera Active";
+                    ModeDetail = "OBS Virtual Camera active";
                     OnModeChanged?.Invoke(ModeDetail);
                     return ModeDetail;
                 }
 
-                Log("Standalone Virtual Camera start failed — falling through to RTSP");
+                Log("OBS Virtual Camera start failed — falling through to RTSP");
                 _vcamQueue.Dispose(); _vcamQueue = null;
             }
 
-            // ── Path 2: RTSP (always available with bundled ffmpeg) ───────────
+            // ── Path 2: RTSP publisher (requires an external server) ─────────
             return StartRtsp();
         }
 
         private string StartRtsp()
         {
             _pipe?.Dispose();
-            _pipe = new FfmpegPipe(Width, Height, Fps, useObsVirtualCam: false);
+            _pipe = new FfmpegPipe(Width, Height, Fps);
             _pipe.OnLog += Log;
-            _pipe.OnRunningChanged += ok => { if (!ok && _running) Log("RTSP stream stopped"); };
+            _pipe.OnRunningChanged += ok =>
+            {
+                if (ok) return;
+                lock (_stateLock)
+                {
+                    if (!_running || ActiveMode != VirtualCameraMode.Rtsp) return;
+                    _running = false;
+                    ActiveMode = VirtualCameraMode.None;
+                    ModeDetail = "RTSP publisher stopped";
+                }
+                Log(ModeDetail);
+                OnModeChanged?.Invoke(ModeDetail);
+            };
 
             if (_pipe.Start())
             {
@@ -109,16 +125,20 @@ namespace SticamHost.VirtualCamera
             }
 
             ActiveMode = VirtualCameraMode.None;
-            ModeDetail = "FAILED — check ffmpeg in tools/";
+            ModeDetail = "FAILED - install ffmpeg and start an RTSP server on 127.0.0.1:8554";
             Log(ModeDetail);
+            OnModeChanged?.Invoke(ModeDetail);
             return ModeDetail;
         }
 
         public void Stop()
         {
-            _running   = false;
-            ActiveMode = VirtualCameraMode.None;
-            ModeDetail = "";
+            lock (_stateLock)
+            {
+                _running = false;
+                ActiveMode = VirtualCameraMode.None;
+                ModeDetail = "";
+            }
             _pipe?.Stop(); _pipe = null;
             _vcamQueue?.Stop(); _vcamQueue = null;
             OnModeChanged?.Invoke("Stopped");
@@ -132,47 +152,71 @@ namespace SticamHost.VirtualCamera
         /// </summary>
         public void PushFrame(Bitmap bmp)
         {
-            if (!_running) return;
+            lock (_stateLock)
+            {
+                if (!_running) return;
+            }
 
             if (bmp.Width != Width || bmp.Height != Height)
             {
                 Log($"Resolution changed from {Width}x{Height} to {bmp.Width}x{bmp.Height}. Re-initializing Virtual Camera.");
 
                 // Stop the active queue/pipe
+                VirtualCameraMode previousMode = ActiveMode;
+                _running = false;
                 _vcamQueue?.Stop(); _vcamQueue = null;
                 _pipe?.Stop(); _pipe = null;
-                _running = false;
 
                 // Update resolution
                 Width  = bmp.Width;
                 Height = bmp.Height;
 
                 // Re-initialize queue or pipe
-                if (ActiveMode == VirtualCameraMode.ObsVirtualCam)
+                if (previousMode == VirtualCameraMode.ObsVirtualCam)
                 {
                     _vcamQueue = new ObsVirtualCamQueue(Width, Height, Fps);
+                    _vcamQueue.OnLog += Log;
                     if (_vcamQueue.Start())
                     {
                         _running = true;
+                        ActiveMode = VirtualCameraMode.ObsVirtualCam;
                     }
                     else
                     {
-                        Log("Re-initialization of Standalone Virtual Camera failed.");
+                        Log("Re-initialization of OBS Virtual Camera failed.");
                         ActiveMode = VirtualCameraMode.None;
+                        ModeDetail = "OBS Virtual Camera stopped after resolution change";
+                        OnModeChanged?.Invoke(ModeDetail);
                     }
                 }
-                else if (ActiveMode == VirtualCameraMode.Rtsp)
+                else if (previousMode == VirtualCameraMode.Rtsp)
                 {
-                    _pipe = new FfmpegPipe(Width, Height, Fps, useObsVirtualCam: false);
+                    _pipe = new FfmpegPipe(Width, Height, Fps);
                     _pipe.OnLog += Log;
+                    _pipe.OnRunningChanged += ok =>
+                    {
+                        if (ok) return;
+                        lock (_stateLock)
+                        {
+                            if (!_running || ActiveMode != VirtualCameraMode.Rtsp) return;
+                            _running = false;
+                            ActiveMode = VirtualCameraMode.None;
+                            ModeDetail = "RTSP publisher stopped";
+                        }
+                        Log(ModeDetail);
+                        OnModeChanged?.Invoke(ModeDetail);
+                    };
                     if (_pipe.Start())
                     {
                         _running = true;
+                        ActiveMode = VirtualCameraMode.Rtsp;
                     }
                     else
                     {
                         Log("Re-initialization of RTSP stream failed.");
                         ActiveMode = VirtualCameraMode.None;
+                        ModeDetail = "RTSP publisher stopped after resolution change";
+                        OnModeChanged?.Invoke(ModeDetail);
                     }
                 }
             }

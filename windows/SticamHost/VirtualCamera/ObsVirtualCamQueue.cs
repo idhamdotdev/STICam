@@ -34,6 +34,9 @@ namespace SticamHost.VirtualCamera
         private BlockingCollection<Bitmap>? _queue;
         private Thread?                     _workerThread;
         private byte[]?                     _nv12Buffer;
+        private readonly object             _stateLock = new();
+
+        public event Action<string>? OnLog;
 
         public ObsVirtualCamQueue(int width, int height, int fps)
         {
@@ -45,6 +48,11 @@ namespace SticamHost.VirtualCamera
         public bool Start()
         {
             if (_initialized) return true;
+            if (_width <= 0 || _height <= 0 || _fps <= 0 || (_width & 1) != 0 || (_height & 1) != 0)
+            {
+                OnLog?.Invoke("OBS VirtualCam requires positive, even frame dimensions and FPS.");
+                return false;
+            }
 
             int cx = _width;
             int cy = _height;
@@ -103,13 +111,13 @@ namespace SticamHost.VirtualCamera
                     IsBackground = true,
                     Priority = ThreadPriority.Normal
                 };
-                _workerThread.Start();
-
                 _initialized = true;
+                _workerThread.Start();
                 return true;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                OnLog?.Invoke($"OBS VirtualCam shared-memory startup failed: {ex.Message}");
                 Stop();
                 return false;
             }
@@ -117,7 +125,9 @@ namespace SticamHost.VirtualCamera
 
         public void WriteFrame(Bitmap bmp)
         {
-            if (!_initialized || _queue == null || _queue.IsAddingCompleted) return;
+            lock (_stateLock)
+            {
+                if (!_initialized || _queue == null || _queue.IsAddingCompleted) return;
 
             try
             {
@@ -129,24 +139,26 @@ namespace SticamHost.VirtualCamera
                     clone.Dispose();
                 }
             }
-            catch (Exception)
-            {
-                // Ignore frame write errors
+                catch (Exception ex)
+                {
+                    OnLog?.Invoke($"OBS VirtualCam frame queue failed: {ex.Message}");
+                }
             }
         }
 
         private void WorkerLoop()
         {
-            if (_queue == null) return;
-            foreach (var bmp in _queue.GetConsumingEnumerable())
+            var queue = _queue;
+            if (queue == null) return;
+            foreach (var bmp in queue.GetConsumingEnumerable())
             {
                 try
                 {
                     ProcessFrame(bmp);
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    // Ignore frame process errors
+                    OnLog?.Invoke($"OBS VirtualCam frame conversion failed: {ex.Message}");
                 }
                 finally
                 {
@@ -203,33 +215,29 @@ namespace SticamHost.VirtualCamera
 
         public void Stop()
         {
-            if (_initialized)
+            BlockingCollection<Bitmap>? queue;
+            Thread? worker;
+            lock (_stateLock)
             {
-                _queue?.CompleteAdding();
-                _workerThread?.Join(500);
-
-                if (_queue != null)
-                {
-                    while (_queue.TryTake(out var bmp))
-                    {
-                        bmp.Dispose();
-                    }
-                    _queue.Dispose();
-                    _queue = null;
-                }
-
+                if (!_initialized && _queue == null) return;
+                _initialized = false;
+                queue = _queue;
+                worker = _workerThread;
+                queue?.CompleteAdding();
+                while (queue?.TryTake(out var pending) == true) pending.Dispose();
+                _queue = null;
                 _workerThread = null;
-
-                if (_accessor != null)
-                {
-                    // Mark state as STOPPING (3)
-                    try { _accessor.Write(8, (uint)3); } catch { }
-                }
             }
 
+            // The worker must stop before its memory map is disposed.
+            worker?.Join();
+            queue?.Dispose();
+            if (_accessor != null)
+            {
+                try { _accessor.Write(8, (uint)3); } catch { }
+            }
             _accessor?.Dispose(); _accessor = null;
             _mmf?.Dispose();      _mmf = null;
-            _initialized = false;
         }
 
         public void Dispose() => Stop();
