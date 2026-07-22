@@ -35,3 +35,27 @@ jobs:
       - name: Build release
         working-directory: windows/SticamHost
         run: dotnet build -c Release
+
+  dependency-submission:
+    name: Dependency Submission
+    # Without this the Android app is invisible to Dependabot alerts: GitHub
+    # does not parse build.gradle (Gradle has no static dependency detection),
+    # so a CVE in MediaPipe or androidx would never be reported. NuGet and
+    # Actions are detected statically and need no equivalent job.
+    # Push-only -- submitting from a PR would misreport main's dependencies.
+    if: github.event_name == 'push'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Submit Android dependency graph
+        uses: gradle/actions/dependency-submission@v6
+        with:
+          build-root-directory: android
