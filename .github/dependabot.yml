@@ -1,9 +1,20 @@
 # Automated dependency + security updates.
-# Dependabot opens PRs when a dependency has an update or a known vulnerability.
-# Breaking MAJOR version bumps are ignored to avoid noisy, build-breaking PRs.
-# Minor, patch, and security updates still come through. To take a specific
-# major anyway, comment `@dependabot ignore` settings on the PR or remove the
-# relevant `ignore` block below.
+#
+# SECURITY updates are not configured here. They are enabled in the repo's
+# Settings > Advanced Security and keep working with or without this file,
+# opening a PR only when a dependency has a known vulnerability. That is the
+# half worth having: STICam bundles FFmpeg, which parses untrusted video off
+# the network, so a real CVE there needs to surface fast.
+#
+# VERSION updates -- the routine "a newer release exists" PRs -- are DISABLED
+# via `open-pull-requests-limit: 0`, which per GitHub's docs affects version
+# updates only and leaves security updates untouched. Two full batches were
+# closed unmerged without ever being wanted (10 PRs on 2026-07-18, 7 more on
+# 2026-07-22), so the weekly churn was only cluttering the branch list.
+#
+# To resume them, set the limits back to 5. The `ignore` blocks are kept for
+# exactly that case: if resumed, breaking MAJOR bumps stay filtered out and
+# only minor/patch updates come through.
 version: 2
 updates:
   # Android client (Gradle)
@@ -11,7 +22,7 @@ updates:
     directory: "/android"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "deps"
     ignore:
@@ -23,7 +34,7 @@ updates:
     directory: "/windows/SticamHost"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "deps"
     ignore:
@@ -35,6 +46,7 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    open-pull-requests-limit: 0
     commit-message:
       prefix: "ci"
     ignore:
