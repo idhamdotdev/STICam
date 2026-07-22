@@ -59,3 +59,11 @@ jobs:
         uses: gradle/actions/dependency-submission@v6
         with:
           build-root-directory: android
+          # Report ONLY what ships in the APK. Without this the buildscript
+          # classpath is submitted too, so the Android Gradle Plugin's own
+          # transitive deps (netty, bouncycastle, jdom, protobuf) raised ~40
+          # unfixable alerts against settings.gradle -- their versions are
+          # pinned inside AGP and none of them run on a user's phone. The
+          # regex keeps debug/releaseRuntimeClasspath and drops the plugin
+          # `classpath` configuration, which it does not match.
+          dependency-graph-include-configurations: '.*[Rr]untimeClasspath'
