@@ -1,0 +1,25 @@
+name: Feature request
+description: Suggest an improvement to STICam
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+      description: >
+        Describe the situation, not only the feature. Knowing the underlying need
+        often leads to a better solution than the one originally requested.
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What did you have in mind?
+      description: Optional. If you already have a specific idea, describe it here.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What do you do today instead?
+      description: Optional. Workarounds tell a lot about how urgent something is.

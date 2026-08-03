@@ -1,0 +1,42 @@
+# This repository is a product page and trust centre. It must never contain
+# source code, build output, signing material, or private notes.
+
+# Signing material — belongs nowhere near a public repository
+*.jks
+*.keystore
+keystore.properties
+*.pfx
+*.p12
+*.pem
+*.snk
+
+# Secrets
+.env
+.env.*
+*.token
+*secret*
+*credential*
+
+# Source and build output — if any of this appears here, something went wrong
+*.kt
+*.cs
+*.java
+src/
+android/
+windows/
+bin/
+obj/
+build/
+node_modules/
+
+# Release binaries are attached to GitHub Releases, not committed
+*.apk
+*.aab
+*.exe
+*.msi
+*.zip
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini

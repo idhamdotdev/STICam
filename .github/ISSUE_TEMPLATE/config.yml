@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/idhamdotdev/STICam/security/advisories/new
+    about: Report privately. Please do not open a public issue for security problems.
+  - name: Commercial licensing, custom builds, or support
+    url: https://idham.dev
+    about: Custom development, white-label licensing, integration work, and paid support.
+  - name: Source code access
+    url: https://github.com/idhamdotdev/STICam/blob/main/COPYRIGHT.md
+    about: STICam is proprietary freeware. Read the ownership and verification details.

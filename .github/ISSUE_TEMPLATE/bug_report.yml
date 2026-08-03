@@ -1,0 +1,76 @@
+name: Bug report
+description: Something in STICam does not work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this.
+
+        **Security issues do not belong here.** If you think you have found a
+        vulnerability, use the private channel in
+        [SECURITY.md](https://github.com/idhamdotdev/STICam/blob/main/SECURITY.md) instead.
+
+  - type: input
+    id: version
+    attributes:
+      label: STICam version
+      description: Shown inside the app. Please check you are on the latest release first.
+      placeholder: "1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Connection mode
+      options:
+        - Wi-Fi
+        - USB
+        - Both
+        - Not connected / not applicable
+    validations:
+      required: true
+
+  - type: input
+    id: phone
+    attributes:
+      label: Android device and version
+      placeholder: "Samsung Galaxy S21, Android 14"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: "Run `winver` to check."
+      placeholder: "Windows 11 23H2, build 22631.4169"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open STICam Host and select USB
+        2. Start the stream on the phone
+        3. Open Zoom and select the STICam camera
+        4. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Screenshots or logs
+      description: Optional, but usually the fastest route to a fix.
