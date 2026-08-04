@@ -1,8 +1,9 @@
 # Third-Party Notices
 
-STICam is proprietary freeware (see [EULA.md](EULA.md)). The application code is the
-Developer's own work. It is not, and is not claimed to be, original in every byte it
-ships: like any real application it uses third-party libraries, a font, a
+STICam is proprietary freeware (see [EULA.md](EULA.md)). The application project is
+controlled by the Developer, with development assistance disclosed in
+[COPYRIGHT.md](COPYRIGHT.md). It is not, and is not claimed to be, original in every byte
+it ships: like any real application it uses third-party libraries, a font, a
 machine-learning model, and operating-system APIs.
 
 This document identifies every third-party component referenced, bundled, or used to
@@ -13,14 +14,20 @@ limits, reduces, or overrides any right those licenses grant you. Where a third-
 license conflicts with the EULA, the third-party license prevails as to that component.
 
 This notice is informational and does not replace the complete license text supplied by
-each upstream project. Release packages include the full license texts required by the
-exact binaries being distributed.
+each upstream project. The original v1.0.0 packages included the EULA and this notice but
+did not include separate copies of every common license text. The v1.0.1 packaging adds
+those texts plus an exact generated Android runtime inventory. Upstream licenses and the
+rights they grant remain effective regardless of that packaging omission.
 
-## Copyleft status
+Copies of the license texts prepared for v1.0.1 are available now in
+[`THIRD-PARTY-LICENSES/`](THIRD-PARTY-LICENSES/).
 
-STICam contains **no copyleft-licensed components**. Every third-party component listed
-below is under a permissive license (Apache-2.0, MIT, BSD) or the SIL Open Font License,
-all of which permit inclusion in a proprietary application.
+## Distributed-license status
+
+STICam release binaries contain no component used under GPL or LGPL terms. Runtime
+software dependencies use Apache-2.0, MIT, or BSD-3-Clause; Lalezar remains under the SIL
+Open Font License 1.1. Checker Framework compatibility annotations are dual-licensed;
+STICam uses the MIT option.
 
 Decoding and the virtual camera both use Media Foundation, which is part of Windows. No
 third-party media binaries are distributed with STICam.
@@ -48,17 +55,44 @@ SHA-256 checksums for bundled binary assets are published with each release.
 | AndroidX AppCompat | 1.6.1 | Android compatibility support | Apache-2.0 |
 | AndroidX Core KTX | 1.12.0 | Android Kotlin extensions | Apache-2.0 |
 | MediaPipe Tasks Vision | 0.10.35 | On-device face landmark detection | Apache-2.0 ([MediaPipe](https://github.com/google-ai-edge/mediapipe)) |
+| MediaPipe Tasks Core | 0.10.35 | MediaPipe runtime; patched for v1.0.1 as described below | Apache-2.0 |
 | Kotlin Coroutines Android | 1.7.3 | Structured concurrency | Apache-2.0 ([kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines)) |
 | Kotlin stdlib / Android plugin | 1.9.22 | Kotlin runtime and compilation | Apache-2.0 ([Kotlin](https://github.com/JetBrains/kotlin)) |
 
-Transitive Android dependencies retain their own licenses and notices. A dependency and
-license report is generated and reviewed whenever versions change.
+### MediaPipe version distinction
+
+- **v1.0.0** uses the unmodified Tasks Core AAR. It enables MediaPipe's remote statistics
+  logger and includes Google Data Transport/Firebase encoders.
+- **v1.0.1 and later** apply a checksum-gated build patch that redirects the factory to
+  MediaPipe's bundled no-op logger, removes the remote-logging classes, and rejects Google
+  Data Transport or Firebase dependencies.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Upstream `tasks-core-0.10.35.aar` | `4EDF2F33C840D682C751B3CA951B1AE0465373734776D7FB37DCEF936DE28AD0` |
+| Generated v1.0.1 no-telemetry AAR | `527FBCE180AF8E979F684FD77E1163347BEEBAF1F8AFF1EA19E54752F1BE580C` |
+
+The patch does not change MediaPipe's Apache-2.0 license. A different upstream byte
+sequence or class layout fails the private release build and requires a new review.
+
+The v1.0.1 APK includes `assets/licenses/ANDROID_DEPENDENCIES.txt`, generated from the
+resolved release runtime. Current transitive license groups are:
+
+- Apache-2.0: AndroidX, Kotlin/coroutines, MediaPipe, Guava/FailureAccess, Flogger, Error
+  Prone annotations, J2ObjC annotations, JSR-305 annotations, and JetBrains annotations;
+- MIT: Checker Framework compatibility annotations (Michael Ernst, Werner M. Dietl,
+  Suzanne Millstein, and contributors) and Animal Sniffer annotations (Copyright 2009
+  Codehaus.org);
+- BSD-3-Clause: protobuf-javalite;
+- SIL-OFL-1.1: Lalezar font.
+
+JUnit's EPL-1.0 license applies only to a test dependency that is not packaged in the APK.
 
 ## Windows dependencies
 
 | Component | Version | Purpose | License |
 | --- | --- | --- | --- |
-| .NET runtime | 10.0, embedded self-contained | Windows application runtime | MIT ([dotnet/runtime](https://github.com/dotnet/runtime)) plus its included third-party notices |
+| .NET runtime | 10.0.8, self-contained | Windows application runtime shipped with STICam Host | MIT ([dotnet/runtime](https://github.com/dotnet/runtime)) plus its included third-party notices |
 | Microsoft .NET Runtime installer (x64) | 10.0.10 | Bootstrap prerequisite, run silently at install time only when the machine lacks .NET 10, then deleted | Redistributed unmodified from [Microsoft](https://aka.ms/dotnet/10.0/dotnet-runtime-win-x64.exe). MIT. Authenticode-signed `CN=.NET, O=Microsoft Corporation` |
 | Media Foundation | Part of Windows 11 | H.264 decoding and the virtual camera | Operating-system component, used through public APIs, not redistributed |
 | Android Debug Bridge (`adb.exe`, `AdbWinApi.dll`, `AdbWinUsbApi.dll`) | 1.0.41 (Platform Tools 36.0.0-13206524) | USB reverse tunneling | Apache-2.0 ([Android Platform Tools](https://developer.android.com/tools/releases/platform-tools)) |
@@ -73,6 +107,14 @@ The Windows installer includes or invokes these conditionally distributed binari
 | `AdbWinApi.dll` | Platform Tools 36.0.0-13206524 | `120BEF587119C6CB926B86B9BE90FDFBCE38937588EAE28CD91A94CE63C7B965` |
 | `AdbWinUsbApi.dll` | Platform Tools 36.0.0-13206524 | `6CA69A2CA0E31309C087D288F058977D421AD03500E4C3E1DBD981241A069C60` |
 | `dotnet-runtime-win-x64.exe` | Microsoft .NET Runtime 10.0.10 (x64) | `38CF0578B18F98FEBBB9FE63FC12671AFE951D12BB5F2F3EFF3F801CC0D37993` |
+
+The v1.0.1 Windows installer also carries the exact license files from the .NET 10.0.8
+runtime pack used by the self-contained host:
+
+| File | SHA-256 |
+| --- | --- |
+| `DotNet-Runtime-10.0.8-LICENSE.txt` | `D7A68596AB69B06F51CA278A6545148E4269A9381C26D597C13DF5D88E08CF5B` |
+| `DotNet-Runtime-10.0.8-THIRD-PARTY-NOTICES.txt` | `6D15E10A101C6BFFF2AB4429ED061BF76C456FC4B23AD6B03E0D0F8377148A21` |
 
 ## Build and packaging tools
 
@@ -97,7 +139,8 @@ affiliation or endorsement is implied.
 Before publishing an APK or Windows installer:
 
 - inventory every bundled DLL, executable, model, font, package, and runtime;
-- confirm no copyleft-licensed component has entered the dependency graph;
+- confirm no GPL, LGPL, or other unapproved software license has entered the dependency
+  graph;
 - verify component versions and SHA-256 checksums;
 - include required upstream copyright and license notices in the shipped package;
 - preserve notices from NuGet, Gradle, MediaPipe, Android Platform Tools, and the .NET
@@ -106,6 +149,8 @@ Before publishing an APK or Windows installer:
   notes;
 - update this document whenever a dependency, binary, model, font, or packaging method
   changes.
+- confirm the final APK contains no Google Data Transport/Firebase classes and carries
+  the generated dependency inventory and full common license texts.
 
 ## Reporting an attribution problem
 

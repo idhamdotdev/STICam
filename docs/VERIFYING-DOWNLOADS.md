@@ -87,11 +87,12 @@ You cannot read STICam's source. You *can* independently confirm:
 - **Who built it** — the signing certificate fingerprint is fixed and published.
 - **That your copy is unaltered** — via the published SHA-256.
 - **What it does on the network** — the security model, including its limitations, is
-  documented in [SECURITY.md](../SECURITY.md). You can confirm it with Wireshark or any
-  firewall monitor; STICam talks to your PC on port `8765` and to nothing else.
-- **That it sends nothing home** — see [PRIVACY.md](../PRIVACY.md). There is no analytics
-  SDK, no crash reporter, and no server to talk to. Block it from the internet entirely
-  and every feature still works.
+  documented in [SECURITY.md](../SECURITY.md). STICam's own stream goes to your PC on
+  port `8765`. Android v1.0.0 also contains MediaPipe's upstream metrics transport;
+  v1.0.1 removes it. You can confirm the distinction with Wireshark or a firewall monitor.
+- **Its privacy boundary** — see the version-specific disclosure in
+  [PRIVACY.md](../PRIVACY.md). Every feature works with internet access blocked; v1.0.1
+  additionally removes Google Data Transport and Firebase from the APK.
 
 ## Something looks wrong
 

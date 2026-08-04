@@ -6,13 +6,19 @@
 
 **Turn an Android phone into a Windows webcam over Wi-Fi or USB.**
 
-Free to use, fully offline, and no account required.
+Free to use, works offline, and no account required.
 
 [![Download](https://img.shields.io/badge/Download-v1.0.0-2A7AE2?style=for-the-badge&logo=github)](https://github.com/idhamdotdev/STICam/releases/latest)
 [![License](https://img.shields.io/badge/License-Proprietary%20Freeware-2A7AE2?style=for-the-badge)](EULA.md)
-[![Privacy](https://img.shields.io/badge/Telemetry-none-2A7AE2?style=for-the-badge)](PRIVACY.md)
+[![Privacy](https://img.shields.io/badge/Privacy-version%20notice-2A7AE2?style=for-the-badge)](PRIVACY.md)
 
 </div>
+
+> [!IMPORTANT]
+> The original Android v1.0.0 release includes MediaPipe's upstream metrics transport.
+> Google says it sends performance/utilization metrics, not image or video input. The
+> v1.0.1 remediation removes that transport; see the version-specific
+> [Privacy Policy](PRIVACY.md) before installing.
 
 ---
 
@@ -31,7 +37,7 @@ Free to use, fully offline, and no account required.
 | **AR filters** | Apply optional on-device face effects from the Windows control panel. |
 | **Windows virtual camera** | Use STICam in Discord, Zoom, Teams, OBS, the Windows Camera app, and other compatible applications. |
 | **Automatic reconnection** | Resume the stream after a temporary interruption. |
-| **Private by design** | No account, subscription, analytics, ads, cloud processing, or developer-operated server. |
+| **Private by design** | No account, subscription, ads, cloud processing, or developer-operated server. MediaPipe metrics are removed in Android v1.0.1; v1.0.0 is disclosed in the Privacy Policy. |
 
 <div align="center">
 

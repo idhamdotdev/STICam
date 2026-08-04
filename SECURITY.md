@@ -81,6 +81,14 @@ Installation is elevated because COM registration is machine-wide. Only install 
 releases and do not replace bundled executables or DLLs with files from untrusted
 sources.
 
+### Telemetry boundary
+
+Android v1.0.0 contains MediaPipe Tasks' upstream metrics transport. According to
+Google's MediaPipe privacy notice, it sends API performance and utilization metrics, not
+the image/video input. Android v1.0.1 selects MediaPipe's no-op logger and removes Google
+Data Transport and Firebase from the APK. See [PRIVACY.md](PRIVACY.md) for the full
+version-specific disclosure.
+
 ## Verifying Official Releases
 
 Each official release publishes a SHA-256 checksum for every downloadable asset. Verify
@@ -108,6 +116,9 @@ CF:FD:EE:3D:95:EB:BD:D9:32:5A:3D:52:1B:6D:62:06:12:F7:DB:4D:6F:93:5F:3D:0E:5D:20
 
 Android normally rejects an update signed by a different certificate. A locally built or
 debug-signed APK is not an official release.
+
+The Windows installer is not currently Authenticode-signed. Windows may show an
+unknown-publisher warning; verify the published SHA-256 checksum before running it.
 
 ## Scope Guidance
 

@@ -2,18 +2,19 @@
 
 ## Authorship
 
-STICam was designed, written, and is maintained by **Idham**, operating under the
+STICam was conceived, directed, and is maintained by **Idham**, operating under the
 **idham.dev** brand.
 
 Copyright © 2026 Idham (idham.dev). All rights reserved.
 
-Every line of STICam's application code — the Android capture and streaming client,
-the Windows host, the Media Foundation virtual-camera source, the auto-framing logic,
-the user interface, and the project artwork — was written by the Developer.
+The Developer owns the STICam-specific application code and product assets to the extent
+recognized by applicable law. Development has included code and documentation produced
+with AI coding assistants under the Developer's direction and review. This page therefore
+does not claim that every line was manually typed by one person.
 
-STICam is not a fork, a rebrand, a template, or a rewrite of another project. It was
-built from nothing by one author, and the dated development record that proves it is
-retained privately — see [Evidence of Authorship](#evidence-of-authorship) below.
+STICam is not presented as a fork or rebrand of another application. Its dated private
+development record is retained as evidence of the project's evolution — see
+[Evidence of Authorship](#evidence-of-authorship) below.
 
 ## Third-Party Components
 
@@ -26,8 +27,9 @@ its version, purpose, license, and upstream source.
 
 The distinction matters and is stated plainly here:
 
-- **Original work of the Developer** — STICam's application code, architecture,
-  protocol, user interface, and project artwork.
+- **STICam-specific work controlled by the Developer** — the application architecture,
+  protocol, implementation, user interface, branding, and product-specific artwork,
+  subject to applicable law and the AI-assistance disclosure above.
 - **Third-party work, properly licensed** — everything listed in
   THIRD-PARTY-NOTICES.md. Those components remain the property of their authors and
   remain under their own licenses.
