@@ -11,8 +11,10 @@ Everything here takes about a minute and needs no extra software.
 | Source | URL |
 | --- | --- |
 | GitHub Releases | <https://github.com/idhamdotdev/STICam/releases> |
-| Google Play | where published |
 | Website | <https://idham.dev> |
+
+STICam is not currently published on Google Play. Unless this page is updated with an
+official listing, a Play Store app using the STICam name is not an official release.
 
 Anything from a download portal, an APK mirror, a file-sharing link, or a "modded"
 build is not an official release. It is not supported and may have been altered.
@@ -73,8 +75,8 @@ Developer has no objection to it. Two things worth knowing before you read the r
 
 - **A handful of engines may flag STICam.** It installs a system-wide COM component (the
   virtual camera), bundles `adb.exe`, and opens a network listener. That combination
-  triggers heuristic detections in some scanners. Compare against the published scan
-  result for the same release.
+  can trigger heuristic detections in some scanners. Review the named detections and
+  verify the file's SHA-256; do not rely on the detection count alone.
 - **Unsigned installers trigger SmartScreen.** Windows may warn about an unrecognized
   publisher until the release has built enough download reputation.
 
