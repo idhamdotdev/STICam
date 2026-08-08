@@ -98,14 +98,14 @@ the checksum before installation. Full instructions:
 Windows PowerShell:
 
 ```powershell
-Get-FileHash .\STICam_v1.0.0.apk -Algorithm SHA256
-Get-FileHash .\STICam_Installer_v1.0.0.exe -Algorithm SHA256
+Get-FileHash .\STICam_v1.0.1.apk -Algorithm SHA256
+Get-FileHash .\STICam_Installer_v1.0.1.exe -Algorithm SHA256
 ```
 
 Linux or macOS:
 
 ```bash
-sha256sum STICam_v1.0.0.apk STICam_Installer_v1.0.0.exe
+sha256sum STICam_v1.0.1.apk STICam_Installer_v1.0.1.exe
 ```
 
 The current official Android release certificate SHA-256 fingerprint is:

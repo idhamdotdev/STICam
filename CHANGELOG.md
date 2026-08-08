@@ -5,19 +5,18 @@ User-visible changes in official STICam releases.
 Release assets and SHA-256 checksums are published on
 [GitHub Releases](https://github.com/idhamdotdev/STICam/releases).
 
-## v1.0.1 — unreleased
+## v1.0.1 — 2026-08-08
 
-Privacy and release-compliance remediation:
+Privacy, reliability, and release-compliance update:
 
 - disables MediaPipe's remote statistics logger using its bundled no-op implementation;
 - removes Google Data Transport and Firebase from the Android runtime graph;
 - removes unused Android storage-permission declarations;
 - bundles full common third-party license texts and an exact Android runtime dependency
   inventory;
+- adds native portrait streaming and responsive portrait connection/live-control layouts;
+- uses STICam navy letterboxing for portrait video in the fixed 16:9 virtual-camera output;
 - documents that the Windows installer is not yet Authenticode-signed.
-
-Do not treat this section as a published release until signed assets and checksums appear
-on the official Releases page.
 
 ## v1.0.0
 

@@ -19,9 +19,8 @@ the original v1.0.0 Android release.
   statistics logger and excludes Google Data Transport and Firebase. These builds send
   no MediaPipe metrics.
 
-Until v1.0.1 appears on the official Releases page, treat v1.0.0 as the current affected
-version. This disclosure will remain here so users can distinguish old and remediated
-builds.
+Android v1.0.1 is the current remediated release. Android v1.0.0 remains an affected
+version. This disclosure stays here so users can distinguish old and remediated builds.
 
 ## What STICam does
 

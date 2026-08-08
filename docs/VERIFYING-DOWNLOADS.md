@@ -26,14 +26,14 @@ single character, delete the file.
 **Windows PowerShell:**
 
 ```powershell
-Get-FileHash .\STICam_v1.0.0.apk -Algorithm SHA256
-Get-FileHash .\STICam_Installer_v1.0.0.exe -Algorithm SHA256
+Get-FileHash .\STICam_v1.0.1.apk -Algorithm SHA256
+Get-FileHash .\STICam_Installer_v1.0.1.exe -Algorithm SHA256
 ```
 
 **Linux or macOS:**
 
 ```bash
-sha256sum STICam_v1.0.0.apk STICam_Installer_v1.0.0.exe
+sha256sum STICam_v1.0.1.apk STICam_Installer_v1.0.1.exe
 ```
 
 ## 3. Check the Android signing certificate
@@ -50,14 +50,14 @@ update. Stop.
 To check it yourself with the Android SDK build tools:
 
 ```bash
-apksigner verify --print-certs STICam_v1.0.0.apk
+apksigner verify --print-certs STICam_v1.0.1.apk
 ```
 
 A debug-signed or locally built APK is not an official release.
 
 ## 4. Verify the Windows installer
 
-The v1.0.0 installer is not code-signed, so Windows may show an unrecognized-publisher
+The v1.0.1 installer is not code-signed, so Windows may show an unrecognized-publisher
 warning and no **Digital Signatures** tab will be present. Confirm the SHA-256 checksum
 from the release notes before running it.
 

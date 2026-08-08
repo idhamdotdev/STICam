@@ -8,7 +8,7 @@
 
 Free to use, works offline, and no account required.
 
-[![Download](https://img.shields.io/badge/Download-v1.0.0-2A7AE2?style=for-the-badge&logo=github)](https://github.com/idhamdotdev/STICam/releases/latest)
+[![Download](https://img.shields.io/badge/Download-v1.0.1-2A7AE2?style=for-the-badge&logo=github)](https://github.com/idhamdotdev/STICam/releases/latest)
 [![License](https://img.shields.io/badge/License-Proprietary%20Freeware-2A7AE2?style=for-the-badge)](EULA.md)
 [![Privacy](https://img.shields.io/badge/Privacy-version%20notice-2A7AE2?style=for-the-badge)](PRIVACY.md)
 
@@ -17,8 +17,8 @@ Free to use, works offline, and no account required.
 > [!IMPORTANT]
 > The original Android v1.0.0 release includes MediaPipe's upstream metrics transport.
 > Google says it sends performance/utilization metrics, not image or video input. The
-> v1.0.1 remediation removes that transport; see the version-specific
-> [Privacy Policy](PRIVACY.md) before installing.
+> Android v1.0.1 removes that transport. Update to the latest release and see the
+> version-specific [Privacy Policy](PRIVACY.md).
 
 ---
 
@@ -68,8 +68,8 @@ Free to use, works offline, and no account required.
 Download both files from the
 [latest GitHub Release](https://github.com/idhamdotdev/STICam/releases/latest):
 
-- `STICam_v1.0.0.apk` — Android application
-- `STICam_Installer_v1.0.0.exe` — Windows application and virtual camera
+- `STICam_v1.0.1.apk` — Android application
+- `STICam_Installer_v1.0.1.exe` — Windows application and virtual camera
 
 Verify both files against the SHA-256 values in the release notes before installing.
 See [Verifying your download](docs/VERIFYING-DOWNLOADS.md).
