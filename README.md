@@ -8,7 +8,7 @@
 
 Free to use, works offline, and no account required.
 
-[![Download](https://img.shields.io/badge/Download-v1.0.1-2A7AE2?style=for-the-badge&logo=github)](https://github.com/idhamdotdev/STICam/releases/latest)
+[![Download](https://img.shields.io/badge/Download-v1.0.3-2A7AE2?style=for-the-badge&logo=github)](https://github.com/idhamdotdev/STICam/releases/latest)
 [![License](https://img.shields.io/badge/License-Proprietary%20Freeware-2A7AE2?style=for-the-badge)](EULA.md)
 [![Privacy](https://img.shields.io/badge/Privacy-version%20notice-2A7AE2?style=for-the-badge)](PRIVACY.md)
 
@@ -68,11 +68,15 @@ Free to use, works offline, and no account required.
 Download both files from the
 [latest GitHub Release](https://github.com/idhamdotdev/STICam/releases/latest):
 
-- `STICam_v1.0.1.apk` — Android application
-- `STICam_Installer_v1.0.1.exe` — Windows application and virtual camera
+- `STICam_v1.0.3.apk` — Android application (version code 11)
+- `STICam_Installer_v1.0.3.exe` — Windows application and virtual camera
 
 Verify both files against the SHA-256 values in the release notes before installing.
 See [Verifying your download](docs/VERIFYING-DOWNLOADS.md).
+
+The same Android signing identity is used for the GitHub APK and Google Play release.
+Google Play availability may be limited by testing status, account eligibility, or
+region.
 
 ## Connect
 

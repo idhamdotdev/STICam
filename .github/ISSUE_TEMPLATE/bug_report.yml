@@ -16,7 +16,7 @@ body:
     attributes:
       label: STICam version
       description: Shown inside the app. Please check you are on the latest release first.
-      placeholder: "1.0.1"
+      placeholder: "1.0.3"
     validations:
       required: true
 

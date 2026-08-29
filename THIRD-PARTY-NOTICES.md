@@ -93,7 +93,7 @@ JUnit's EPL-1.0 license applies only to a test dependency that is not packaged i
 | Component | Version | Purpose | License |
 | --- | --- | --- | --- |
 | .NET runtime | 10.0.8, self-contained | Windows application runtime shipped with STICam Host | MIT ([dotnet/runtime](https://github.com/dotnet/runtime)) plus its included third-party notices |
-| Microsoft .NET Runtime installer (x64) | 10.0.10 | Bootstrap prerequisite, run silently at install time only when the machine lacks .NET 10, then deleted | Redistributed unmodified from [Microsoft](https://aka.ms/dotnet/10.0/dotnet-runtime-win-x64.exe). MIT. Authenticode-signed `CN=.NET, O=Microsoft Corporation` |
+| Microsoft .NET Runtime installer (x64) | 10.0.10 | Bootstrap prerequisite, run silently at install time only when the machine lacks .NET 10, then deleted | Redistributed unmodified from [Microsoft](https://builds.dotnet.microsoft.com/dotnet/Runtime/10.0.10/dotnet-runtime-10.0.10-win-x64.exe). MIT. Authenticode-signed `CN=.NET, O=Microsoft Corporation` |
 | Media Foundation | Part of Windows 11 | H.264 decoding and the virtual camera | Operating-system component, used through public APIs, not redistributed |
 | Android Debug Bridge (`adb.exe`, `AdbWinApi.dll`, `AdbWinUsbApi.dll`) | 1.0.41 (Platform Tools 36.0.0-13206524) | USB reverse tunneling | Apache-2.0 ([Android Platform Tools](https://developer.android.com/tools/releases/platform-tools)) |
 

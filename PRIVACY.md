@@ -1,26 +1,22 @@
 # STICam Privacy Policy
 
-**Last updated:** August 5, 2026
+**Last updated:** August 29, 2026
 
 STICam is a free Android app that turns your phone into a webcam for a Windows PC you
 own. This page explains what the app does — and does not do — with your data.
 
-The short version: STICam has no developer-operated cloud backend. Camera video goes
-only to the Windows PC address you choose. Read the version note below if you installed
-the original v1.0.0 Android release.
-
 ## Important version note
 
 - **Android v1.0.0:** the bundled upstream MediaPipe Tasks 0.10.35 runtime can send API
-  performance and utilization metrics to Google. Google states that MediaPipe does not
-  send the image/video input itself. The metrics are not received by the STICam
-  developer. See Google's [MediaPipe Tasks Privacy Notice](https://developers.google.com/edge/mediapipe/solutions/tasks#mediapipe_tasks_privacy_notice).
-- **Android v1.0.1 and later:** the release build selects MediaPipe's bundled no-op
-  statistics logger and excludes Google Data Transport and Firebase. These builds send
-  no MediaPipe metrics.
+  performance and utilization metrics to Google. Google's MediaPipe notice states that
+  the image/video input itself is not sent. The STICam Developer does not receive those
+  metrics.
+- **Android v1.0.1 and later:** the release build replaces the upstream remote
+  statistics logger with MediaPipe's bundled no-op logger and excludes Google Data
+  Transport and Firebase. The current v1.0.3 release is in this group.
 
-Android v1.0.1 is the current remediated release. Android v1.0.0 remains an affected
-version. This disclosure stays here so users can distinguish old and remediated builds.
+This historical disclosure remains so users can distinguish the original v1.0.0 APK
+from current releases.
 
 ## What STICam does
 
@@ -31,31 +27,29 @@ version. This disclosure stays here so users can distinguish old and remediated 
   the Windows PC you choose.
 - Optionally applies on-device AR filters (face effects).
 
-## What STICam does not do
+## What the Developer does not receive
 
 - No account, sign-in, or registration.
-- No STICam analytics service, crash reporting, advertising SDK, or developer-operated
-  cloud backend.
-- No camera frames, video, or face landmarks are sent to Google by MediaPipe.
-- No data is sent to the STICam developer.
-
-Every feature works without internet access because streaming is local. On v1.0.0,
-blocking internet access also prevents MediaPipe's metrics transport; v1.0.1 removes that
-transport from the APK.
+- No analytics, crash reporting, advertising SDKs, or developer-operated cloud backend.
+- No camera video, face landmarks, account information, analytics, or crash reports are
+  sent to the Developer or to a Developer-operated service. Current releases replace
+  MediaPipe's upstream remote statistics logger with MediaPipe's bundled no-op logger
+  and exclude Google Data Transport and Firebase from the app.
+- Video travels directly from your phone to the PC address you enter. Face landmarks
+  are not sent separately or retained by STICam.
 
 ## Permissions used
 
 | Permission | Why STICam needs it |
-|---|---|
+| --- | --- |
 | Camera | To capture and stream video to your PC. |
 | Network / Wi-Fi state | To connect to your PC over your local network. |
 | Foreground service (camera) | To keep streaming while you switch to another app, like Zoom or Discord. |
 | Notifications | To show the ongoing-stream notification Android requires for foreground services. |
 | Wake lock | To keep the phone's processor awake during an active stream. |
 
-STICam v1.0.1 and later does not request microphone, storage, location, contacts, or
-advertising-ID permissions. The original v1.0.0 APK declared storage permissions that
-were not needed by its user-facing features; those declarations were removed in v1.0.1.
+STICam does not request microphone, storage, location, contacts, or advertising-ID
+permissions.
 
 ## Network security
 
@@ -64,18 +58,15 @@ or authenticated**. Use Wi-Fi mode only on a network you trust. USB mode uses an
 reverse tunnel between your phone and your own PC and does not expose the listener to
 Wi-Fi.
 
-This is a documented design limitation. The full security model is in
-[SECURITY.md](SECURITY.md).
-
 ## Children's privacy
 
-STICam does not knowingly collect personal information from children. The STICam
-developer does not collect personal information from users. The v1.0.0 MediaPipe metrics
-behavior is described separately above.
+The Developer does not knowingly collect personal information from children. STICam
+still processes and transmits camera video locally as described above; that local
+phone-to-PC processing is distinct from collection by the Developer.
 
 ## Changes to this policy
 
-Future changes will be posted at this same URL with an updated "Last updated" date.
+Any future changes will be posted at this same URL with an updated "Last updated" date.
 
 ## Contact
 

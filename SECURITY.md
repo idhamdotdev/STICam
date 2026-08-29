@@ -33,13 +33,12 @@ STICam is maintained by one independent developer. Reports are handled on a best
 basis — please allow time for validation and a coordinated fix before public disclosure.
 You will get an acknowledgement, and credit in the release notes if you want it.
 
-### Security research and the EULA
+### Coordinated disclosure
 
-The STICam license restricts reverse engineering, but that restriction explicitly does
-**not** apply to good-faith security research on a copy you lawfully obtained and run on
-your own device, provided findings are reported through this channel and not published
-before a coordinated fix. See [EULA.md](EULA.md) §3.1. You will not be pursued for
-looking.
+Please contact the Developer before publishing technical details that could put users
+at risk. The EULA does not create a separate security-research license or waive rights
+beyond exceptions required by applicable law. If testing would require access to source
+code, third-party systems, or devices you do not own or control, obtain permission first.
 
 ## Security Model
 
@@ -85,9 +84,9 @@ sources.
 
 Android v1.0.0 contains MediaPipe Tasks' upstream metrics transport. According to
 Google's MediaPipe privacy notice, it sends API performance and utilization metrics, not
-the image/video input. Android v1.0.1 selects MediaPipe's no-op logger and removes Google
-Data Transport and Firebase from the APK. See [PRIVACY.md](PRIVACY.md) for the full
-version-specific disclosure.
+the image/video input. Android v1.0.1 and later replace that logger with MediaPipe's
+bundled no-op implementation and exclude Google Data Transport and Firebase from the
+APK. See [PRIVACY.md](PRIVACY.md) for the current privacy boundary.
 
 ## Verifying Official Releases
 
@@ -98,14 +97,14 @@ the checksum before installation. Full instructions:
 Windows PowerShell:
 
 ```powershell
-Get-FileHash .\STICam_v1.0.1.apk -Algorithm SHA256
-Get-FileHash .\STICam_Installer_v1.0.1.exe -Algorithm SHA256
+Get-FileHash .\STICam_v1.0.3.apk -Algorithm SHA256
+Get-FileHash .\STICam_Installer_v1.0.3.exe -Algorithm SHA256
 ```
 
 Linux or macOS:
 
 ```bash
-sha256sum STICam_v1.0.1.apk STICam_Installer_v1.0.1.exe
+sha256sum STICam_v1.0.3.apk STICam_Installer_v1.0.3.exe
 ```
 
 The current official Android release certificate SHA-256 fingerprint is:
@@ -114,8 +113,9 @@ The current official Android release certificate SHA-256 fingerprint is:
 CF:FD:EE:3D:95:EB:BD:D9:32:5A:3D:52:1B:6D:62:06:12:F7:DB:4D:6F:93:5F:3D:0E:5D:20:35:7B:37:66:10
 ```
 
-Android normally rejects an update signed by a different certificate. A locally built or
-debug-signed APK is not an official release.
+Android normally rejects an update signed by a different certificate. An APK whose
+certificate does not match this fingerprint is not an official direct-distribution
+release. Google Play may additionally protect delivery through Play App Signing.
 
 The Windows installer is not currently Authenticode-signed. Windows may show an
 unknown-publisher warning; verify the published SHA-256 checksum before running it.

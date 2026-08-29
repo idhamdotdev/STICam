@@ -5,6 +5,27 @@ User-visible changes in official STICam releases.
 Release assets and SHA-256 checksums are published on
 [GitHub Releases](https://github.com/idhamdotdev/STICam/releases).
 
+## v1.0.3 — 2026-08-29
+
+Camera-control, compatibility, and packaging update:
+
+- fixes preview orientation after camera controls, rotation, mirroring, and camera
+  switching;
+- shows camera-control panels as floating overlays without resizing the preview;
+- keeps the Windows host viewport at a consistent landscape width and letterboxes
+  portrait video;
+- keeps the Wi-Fi IP field visible above normal, split, and floating Android keyboards
+  in landscape;
+- improves camera-session restart, switching stability, reconnect handling, and virtual
+  camera registration diagnostics;
+- adds an in-app Privacy Policy view without opening a browser;
+- ships the Android application as version code 11 with R8 shrinking and obfuscation;
+- bundles reviewed Android Platform Tools and the required .NET runtime support in the
+  Windows installer.
+
+STICam v1.0.3 does not request microphone access and does not install a virtual
+microphone.
+
 ## v1.0.1 — 2026-08-08
 
 Privacy, reliability, and release-compliance update:

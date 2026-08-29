@@ -11,10 +11,13 @@ Everything here takes about a minute and needs no extra software.
 | Source | URL |
 | --- | --- |
 | GitHub Releases | <https://github.com/idhamdotdev/STICam/releases> |
+| Google Play | Official STICam listing, where available |
 | Website | <https://idham.dev> |
 
-STICam is not currently published on Google Play. Unless this page is updated with an
-official listing, a Play Store app using the STICam name is not an official release.
+Google Play availability may be limited by testing status, account eligibility, or
+region. Check that the listing identifies STICam by idham.dev and uses the Android
+package `com.sticam`. A store listing using the STICam name alone is not proof of an
+official release.
 
 Anything from a download portal, an APK mirror, a file-sharing link, or a "modded"
 build is not an official release. It is not supported and may have been altered.
@@ -28,14 +31,14 @@ single character, delete the file.
 **Windows PowerShell:**
 
 ```powershell
-Get-FileHash .\STICam_v1.0.1.apk -Algorithm SHA256
-Get-FileHash .\STICam_Installer_v1.0.1.exe -Algorithm SHA256
+Get-FileHash .\STICam_v1.0.3.apk -Algorithm SHA256
+Get-FileHash .\STICam_Installer_v1.0.3.exe -Algorithm SHA256
 ```
 
 **Linux or macOS:**
 
 ```bash
-sha256sum STICam_v1.0.1.apk STICam_Installer_v1.0.1.exe
+sha256sum STICam_v1.0.3.apk STICam_Installer_v1.0.3.exe
 ```
 
 ## 3. Check the Android signing certificate
@@ -52,14 +55,21 @@ update. Stop.
 To check it yourself with the Android SDK build tools:
 
 ```bash
-apksigner verify --print-certs STICam_v1.0.1.apk
+apksigner verify --print-certs STICam_v1.0.3.apk
 ```
 
-A debug-signed or locally built APK is not an official release.
+For the direct GitHub APK, the signer certificate SHA-256 must be:
+
+```text
+CF:FD:EE:3D:95:EB:BD:D9:32:5A:3D:52:1B:6D:62:06:12:F7:DB:4D:6F:93:5F:3D:0E:5D:20:35:7B:37:66:10
+```
+
+An APK that is not obtained through an official channel, or whose certificate does not
+match the published identity, is not an official direct-distribution release.
 
 ## 4. Verify the Windows installer
 
-The v1.0.1 installer is not code-signed, so Windows may show an unrecognized-publisher
+The v1.0.3 installer is not code-signed, so Windows may show an unrecognized-publisher
 warning and no **Digital Signatures** tab will be present. Confirm the SHA-256 checksum
 from the release notes before running it.
 

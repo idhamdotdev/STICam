@@ -1,204 +1,149 @@
 # STICam End User License Agreement
 
-Copyright © 2026 Idham (idham.dev). All rights reserved.
+**Effective date:** 25 August 2026
 
-Read this agreement before installing or using STICam. By installing, copying, or
-using the Software you accept these terms. If you do not accept them, do not install
-or use the Software.
+Copyright © 2026 Idham, operating under the idham.dev name. All rights reserved.
 
----
-
-## 1. Definitions
-
-**"Software"** means the STICam Android application, the STICam Windows host
-application, the STICam virtual camera component, their installers, and any
-documentation or assets distributed with them, in compiled binary form.
-
-**"Developer"** means Idham, operating under the idham.dev brand, the sole copyright
-holder of the Software.
-
-**"Official Build"** means a copy of the Software obtained from a distribution
-channel listed in Section 9.
-
-**"You"** means the individual or organization using the Software.
-
----
-
-## 2. Grant of License
-
-The Developer grants You a worldwide, royalty-free, non-exclusive,
-non-transferable, revocable license to:
-
-- **a.** download Official Builds of the Software at no charge;
-- **b.** install and run the Software on any number of devices You own or control;
-- **c.** use the Software for personal purposes;
-- **d.** use the Software for internal business purposes within Your organization,
-  including on employer-owned devices;
-- **e.** make copies of an Official Build solely for backup or internal deployment
-  within Your organization, provided every copy remains complete and unmodified.
-
-This license is granted free of charge. No payment is required to download, install,
-or use the Software.
-
----
-
-## 3. Restrictions
-
-You may **not**:
-
-- **a.** sell, rent, lease, sublicense, or otherwise charge any fee for the Software
-  or for access to it;
-- **b.** redistribute the Software publicly, including uploading it to download
-  portals, app stores, mirrors, file-sharing services, or bundling it with other
-  products, without the Developer's prior written permission;
-- **c.** modify, adapt, translate, or create derivative works based on the Software;
-- **d.** rebrand or white-label the Software, or distribute it under a different name,
-  logo, or identity;
-- **e.** remove, obscure, or alter any copyright notice, trademark, authorship
-  statement, license notice, or attribution contained in or displayed by the Software;
-- **f.** extract, isolate, or reuse any substantial part of the Software — including
-  its user interface, assets, artwork, icons, or compiled components — in another
-  product;
-- **g.** claim authorship or ownership of the Software, or represent Yourself as its
-  original developer;
-- **h.** publish modified versions of the Software, or present any modified build as
-  an official or endorsed release;
-- **i.** use the Developer's name, the STICam name, or the idham.dev name or brand to
-  endorse or promote any product without prior written permission.
-
-### 3.1 Reverse engineering
-
-Except as expressly permitted below, You may not reverse engineer, decompile, or
-disassemble the Software, or attempt to derive its source code.
-
-This restriction does **not** apply:
-
-- **a.** to the extent that applicable law expressly grants You such a right despite
-  a contractual prohibition — including, where applicable, rights to obtain
-  interoperability information;
-- **b.** where the license of a third-party component included in the Software grants
-  such a right. Several components listed in
-  [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) are distributed under open-source
-  licenses; nothing in this agreement restricts any right You hold under those
-  licenses, and where a third-party license permits reverse engineering for
-  debugging or relinking, that permission prevails over this Section as to that
-  component;
-- **c.** to good-faith security research on a copy You lawfully obtained and run on
-  Your own device, provided any finding is reported under
-  [SECURITY.md](SECURITY.md) and not published before a coordinated fix.
-
----
-
-## 4. Ownership
-
-The Software is licensed, not sold. The Developer retains all right, title, and
-interest in the Software, including all intellectual property rights. All rights not
-expressly granted in Section 2 are reserved.
-
-The source code of the Software is confidential and is not distributed under this
-agreement. No provision of this agreement grants You any right to the source code.
-
----
-
-## 5. Third-Party Components
-
-The Software includes components authored by third parties and licensed under their
-own terms. Those components are listed in
-[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), which is distributed with the
+Please read this agreement before installing or using STICam. By installing or using
+the Software, You agree to these terms. If You do not agree, do not install or use the
 Software.
 
-Those components remain governed by their own licenses. Nothing in this agreement
-limits, reduces, or overrides any right granted to You by a third-party license, and
-in the event of a conflict, the third-party license prevails as to that component.
+## 1. Proprietary Freeware License
 
-The Developer makes no ownership claim over any third-party component.
+"Software" means the STICam Android application, STICam Host for Windows, the STICam
+virtual camera, their installers, and the documentation and assets supplied with them.
 
----
+Idham, operating under the idham.dev name ("Developer"), grants You a worldwide,
+royalty-free, non-exclusive, non-transferable license to:
 
-## 6. Scope
+1. download, install, and use an unmodified official build on any number of devices You
+   own or control;
+2. use the Software for personal, educational, non-profit, professional, internal
+   business, and commercial purposes; and
+3. make complete, unmodified copies solely for backup or internal deployment within
+   Your organization.
 
-This agreement governs the copy of the Software it is distributed with. Each release
-carries the terms in force for that release.
+STICam is freeware. No subscription or license fee is required for these permitted
+uses.
 
----
+The Developer claims no ownership of video, images, recordings, streams, or other
+content You create using the Software. You may use that content commercially. You
+remain responsible for obtaining any consent or rights required for the content You
+capture or publish.
 
-## 7. Privacy
+## 2. Restrictions and Ownership
 
-The Software does not collect, transmit, or store personal data. See
-[PRIVACY.md](PRIVACY.md) for the full statement.
+The Software is licensed, not sold. The Developer retains all rights in the
+STICam-specific portions of the Software that are not expressly granted above.
 
----
+Without the Developer's prior written permission, You may not:
 
-## 8. No Warranty
+1. sell, rent, sublicense, or charge others for the Software itself;
+2. redistribute the Software publicly, upload it to another download service or app
+   store, or bundle it with another product;
+3. modify, patch, translate, or create derivative versions of the Software;
+4. rebrand or white-label the Software, or distribute it under another name, logo, or
+   publisher identity;
+5. remove or alter copyright, authorship, trademark, attribution, or license notices;
+6. extract or reuse compiled components, interface assets, artwork, or icons in another
+   product;
+7. claim authorship or represent an unofficial build as approved by the Developer; or
+8. use the Software unlawfully or to violate another person's privacy, intellectual
+   property, or other legal rights.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+You may share links to an official distribution channel. You may also charge for
+content or services You create using STICam, provided You are not selling or charging
+for STICam itself.
 
-The Software transmits video over a local network without encryption or
-authentication in Wi-Fi mode. This is a documented design limitation, described in
-[SECURITY.md](SECURITY.md). You are responsible for choosing a network You trust.
+You may not reverse engineer, decompile, or disassemble the Software, except to the
+limited extent that applicable law or a third-party component's license expressly
+permits it despite this restriction.
 
-To the maximum extent permitted by applicable law, the Developer shall not be liable
-for any claim, damages, data loss, business interruption, or other liability arising
-from the Software or its use. Some jurisdictions do not allow the exclusion of certain
-warranties or liabilities; in those jurisdictions the exclusions above apply only to
-the extent permitted.
+Source code is not included, distributed, or licensed under this agreement. This
+agreement does not grant any right to receive, publish, or distribute source code.
 
----
+## 3. Third-Party Components
 
-## 9. Official Distribution Channels
+The Software includes third-party components governed by their own license terms. Their
+notices and license texts are supplied with the Software and identified in
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
-Only builds obtained from these sources are Official Builds:
+Nothing in this agreement limits a right granted directly by a third-party license. If
+the terms conflict, the third-party license controls only for the relevant third-party
+component.
 
-- the GitHub Releases page of <https://github.com/idhamdotdev/STICam>;
-- Google Play, where published;
-- <https://idham.dev>.
+## 4. Privacy and Network Security
 
-Builds obtained anywhere else are not covered by this license, are not supported, and
-may have been modified. Verify every download against the published SHA-256 checksum
-and, for the Android app, the signing certificate fingerprint in
-[SECURITY.md](SECURITY.md).
+STICam sends camera video from the Android device to the Windows computer selected by
+You. The Developer does not operate an account service or video relay and does not
+receive or store Your video or face-tracking data through a Developer-operated server.
+See [PRIVACY.md](PRIVACY.md) for additional details.
 
----
+Wi-Fi mode sends data over the local network without encryption or authentication. Use
+it only on a private network You trust. USB mode is recommended on shared or untrusted
+networks. See [SECURITY.md](SECURITY.md) for security limitations and reporting
+instructions.
 
-## 10. Termination
+## 5. Updates and Support
 
-This license terminates automatically if You breach any term of Section 3. On
-termination You must stop using the Software and delete all copies. Sections 4, 5, 8,
-and 11 survive termination.
+The Developer may release updates, change features, discontinue support, or stop
+distributing the Software. No update or support service is guaranteed.
 
----
+New license terms apply only to versions distributed with those new terms. Stopping
+distribution or support does not by itself terminate Your license for an official build
+You already obtained.
 
-## 11. General
+## 6. Warranty and Liability
 
-**Governing law.** This agreement is governed by the laws of the Republic of
-Indonesia, without regard to conflict-of-law rules.
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED "AS IS" AND
+"AS AVAILABLE", WITHOUT WARRANTIES OF ANY KIND, INCLUDING WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, NON-INFRINGEMENT, RELIABILITY,
+AVAILABILITY, OR ERROR-FREE OPERATION.
 
-**Severability.** If any provision is held unenforceable, the remaining provisions
-remain in full force.
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE DEVELOPER WILL NOT BE LIABLE FOR
+INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL, OR PUNITIVE DAMAGES, OR FOR LOSS OF DATA,
+PROFITS, REVENUE, BUSINESS, OR USE ARISING FROM THE SOFTWARE.
 
-**Entire agreement.** This agreement, together with the documents it references, is
-the entire agreement between You and the Developer regarding the Software, and
-supersedes any prior understanding.
+Nothing in this agreement excludes or limits a warranty, remedy, liability, or consumer
+right that applicable law does not allow to be excluded or limited.
 
-**Changes.** The Developer may issue revised terms with future versions. Revised terms
-apply only to the versions they accompany. Continuing to use a version You already
-installed keeps the terms that came with it.
+## 7. Official Distribution Channels
 
----
+Official builds are distributed only through:
 
-## 12. Contact
+1. <https://github.com/idhamdotdev/STICam/releases>;
+2. Google Play, where available; and
+3. <https://idham.dev>.
 
-Licensing, commercial use beyond Section 2, white-label enquiries, and permission
-requests:
+Copies obtained elsewhere may be modified, malicious, or unsupported. Where checksums
+or signing details are published, use them to verify Your download.
+
+## 8. Termination and General Terms
+
+Your license terminates automatically if You materially breach this agreement. After
+termination, You must stop using and delete all copies of the Software in Your
+possession or control. Provisions that by their nature should survive termination remain
+effective.
+
+This agreement is governed by the laws of the Republic of Indonesia, without regard to
+conflict-of-law rules. This choice does not remove mandatory protections that apply
+under the law of Your country or place of residence and cannot lawfully be waived.
+
+This agreement is written in English for worldwide distribution. If a courtesy
+translation is provided, the English version controls to the extent permitted by
+applicable law.
+
+If any provision is unenforceable, the remaining provisions remain effective. Failure
+to enforce a provision is not a waiver. This agreement and the documents it expressly
+references are the entire agreement concerning the Software.
+
+## 9. Contact
+
+Questions about licensing, redistribution, white-label arrangements, or other
+permissions may be sent to:
 
 **Idham — idham.dev**
-Email: hello@idham.dev
+
+Email: **hello@idham.dev**
+
 Web: <https://idham.dev>
-
----
-
-*This document is a license agreement drafted for a solo independent developer. It is
-not legal advice. Have a qualified lawyer review it before relying on it in a
-commercial dispute or a paid licensing arrangement.*
