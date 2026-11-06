@@ -8,6 +8,8 @@
 
 Free to use, works offline, and no account required.
 
+[STICam on idham.dev](https://idham.dev/sticam) · [Setup guide (EN)](https://idham.dev/article/android-phone-webcam-windows-sticam) · [Panduan (ID)](https://idham.dev/article/android-sebagai-webcam-windows)
+
 [![Download](https://img.shields.io/badge/Download-v1.0.3-2A7AE2?style=for-the-badge&logo=github)](https://github.com/idhamdotdev/STICam/releases/latest)
 [![License](https://img.shields.io/badge/License-Proprietary%20Freeware-2A7AE2?style=for-the-badge)](EULA.md)
 [![Privacy](https://img.shields.io/badge/Privacy-version%20notice-2A7AE2?style=for-the-badge)](PRIVACY.md)
