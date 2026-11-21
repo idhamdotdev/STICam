@@ -80,6 +80,18 @@ The same Android signing identity is used for the GitHub APK and Google Play rel
 Google Play availability may be limited by testing status, account eligibility, or
 region.
 
+### QR setup preview (Android version code 12)
+
+The [v1.0.3 QR update pre-release](https://github.com/idhamdotdev/STICam/releases/tag/v1.0.3-code12)
+adds optional offline QR setup for Wi-Fi. Install **both** files from that release:
+
+- `STICam_v1.0.3_code12.apk`
+- `STICam_Installer_v1.0.3_QR.exe`
+
+The app version remains 1.0.3; the Android version code increases to 12. This is an
+opt-in preview, not a replacement for the stable downloads above. See the release
+notes for checksums, testing scope, and known limitations.
+
 ## Connect
 
 ### USB
@@ -101,6 +113,19 @@ locked to the selected device.
 4. Start the stream on Android.
 
 If Windows prompts for firewall access, allow STICam on private networks only.
+
+In the **code 12 QR preview**, choose Wi-Fi before clicking Connect on Windows,
+then tap **Scan QR** on Android and scan the code shown by STICam Host. Check the
+filled-in IP address, then tap Connect on Android. Scanning does not start streaming
+automatically. Manual IP entry remains available.
+
+If the host times out while scanning, click Connect on Windows again. When changing
+from USB to Wi-Fi, stop waiting or restart the host first, then select Wi-Fi. On PCs
+with multiple network adapters, check that the selected IP belongs to the network
+shared with the phone; use manual IP entry if it does not.
+
+The QR only fills in the PC address. It does not authenticate the PC or encrypt the
+connection. Scan only a code displayed by your own STICam Host.
 
 > [!WARNING]
 > Wi-Fi video and controls are not authenticated or encrypted. Use Wi-Fi mode only
@@ -147,7 +172,8 @@ download location. Third-party components remain under their own licenses as lis
 
 - Bugs and feature requests: [GitHub Issues](https://github.com/idhamdotdev/STICam/issues/new/choose)
 - Security reports: follow [SECURITY.md](SECURITY.md)
-- Commercial enquiries and support: **hello@idham.dev**
+- User support: **hello@idham.dev**
+- Business, collaborations, and project enquiries: **idhamdev0001@gmail.com**
 
 <div align="center">
 

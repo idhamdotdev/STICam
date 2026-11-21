@@ -1,6 +1,6 @@
 # STICam Privacy Policy
 
-**Last updated:** August 29, 2026
+**Last updated:** November 21, 2026
 
 STICam is a free Android app that turns your phone into a webcam for a Windows PC you
 own. This page explains what the app does — and does not do — with your data.
@@ -21,7 +21,9 @@ from current releases.
 ## What STICam does
 
 - Streams camera video from your phone to a Windows PC over your local Wi-Fi network or
-  a USB cable, using an IP address you type into the app.
+  a USB cable. You can type the PC address manually. The code 12 QR preview also lets
+  you scan that address from STICam Host. QR processing happens on your phone; the scan
+  image is not saved or sent to a server, and scanning does not start streaming.
 - Runs on-device face tracking (MediaPipe) so the shot stays framed on you. Landmark
   processing happens entirely on your phone; only the resulting camera video is sent to
   the Windows PC you choose.
@@ -35,14 +37,14 @@ from current releases.
   sent to the Developer or to a Developer-operated service. Current releases replace
   MediaPipe's upstream remote statistics logger with MediaPipe's bundled no-op logger
   and exclude Google Data Transport and Firebase from the app.
-- Video travels directly from your phone to the PC address you enter. Face landmarks
+- Video travels directly from your phone to the PC address you choose. Face landmarks
   are not sent separately or retained by STICam.
 
 ## Permissions used
 
 | Permission | Why STICam needs it |
 | --- | --- |
-| Camera | To capture and stream video to your PC. |
+| Camera | To capture and stream video to your PC, and to scan the optional Wi-Fi setup QR in builds that include it. |
 | Network / Wi-Fi state | To connect to your PC over your local network. |
 | Foreground service (camera) | To keep streaming while you switch to another app, like Zoom or Discord. |
 | Notifications | To show the ongoing-stream notification Android requires for foreground services. |
@@ -50,6 +52,14 @@ from current releases.
 
 STICam does not request microphone, storage, location, contacts, or advertising-ID
 permissions.
+
+## Optional local diagnostics
+
+Diagnostic builds can log device/model information, OS and app versions, measured
+frame dimensions, stage frame rates, and errors locally. Android USB stage logging is
+debug-only. The Windows USB baseline is opt-in. These logs do not contain camera
+images and are not automatically uploaded to the Developer. Review logs before
+sharing them with support.
 
 ## Network security
 

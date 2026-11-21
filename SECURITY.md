@@ -58,6 +58,13 @@ stream, interrupt it, or send camera-control commands. Reports that only restate
 documented limitation may be closed as known behavior; bypasses of future authentication
 controls, or impacts beyond this model, remain valid security reports.
 
+### Optional Wi-Fi setup QR (code 12 preview)
+
+The QR carries a versioned IPv4 address for the existing listener, not a password,
+pairing secret, or authentication token. Scanning fills the address but does not start
+streaming. Scan only a code displayed by your own STICam Host and check the address
+before connecting. The trusted-private-network restriction above still applies.
+
 ### USB
 
 USB mode uses Android Debug Bridge and `adb reverse` to connect the Android app to the

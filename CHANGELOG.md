@@ -5,6 +5,26 @@ User-visible changes in official STICam releases.
 Release assets and SHA-256 checksums are published on
 [GitHub Releases](https://github.com/idhamdotdev/STICam/releases).
 
+## v1.0.3 QR update (code 12, pre-release) - 2026-11-21
+
+- Adds offline Wi-Fi setup QR generation in STICam Host and scanning in the Android
+  transmitter. Scanning fills the address; the user still starts streaming with Connect.
+- Keeps manual IP entry and USB setup available.
+- Adds opt-in local USB pipeline diagnostics. These are not uploaded to a server;
+  Android stage logging is limited to debug builds.
+- Keeps Android package identity, version name 1.0.3, and the official signing
+  certificate; increases Android version code from 11 to 12.
+- Adds the QR dependencies and their license notices to the packages.
+
+Known preview limitations: the 30-second host connection timeout includes time spent
+scanning; switching modes while the host is waiting can leave the old listener active;
+and automatic IP selection has no manual adapter selector. Select Wi-Fi before
+connecting, restart the host when changing modes, and use manual IP entry when needed.
+
+Automated build/test gates passed, and a local portrait USB diagnostics run was
+measured. Installation of the exact new Windows installer and a complete regression
+of the signed release pair remain pending. This preview does not replace stable v1.0.3.
+
 ## v1.0.3 — 2026-08-29
 
 Camera-control, compatibility, and packaging update:

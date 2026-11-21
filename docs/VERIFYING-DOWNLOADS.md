@@ -41,6 +41,16 @@ Get-FileHash .\STICam_Installer_v1.0.3.exe -Algorithm SHA256
 sha256sum STICam_v1.0.3.apk STICam_Installer_v1.0.3.exe
 ```
 
+For the opt-in QR preview, use the filenames from that release instead:
+
+```powershell
+Get-FileHash .\STICam_v1.0.3_code12.apk -Algorithm SHA256
+Get-FileHash .\STICam_Installer_v1.0.3_QR.exe -Algorithm SHA256
+```
+
+Compare them with that release's `SHA256SUMS.txt`. Do not use the stable code 11
+checksums to verify code 12 files. The stable assets are preserved unchanged.
+
 ## 3. Check the Android signing certificate
 
 Every official STICam APK is signed with the same private key. The certificate's SHA-256

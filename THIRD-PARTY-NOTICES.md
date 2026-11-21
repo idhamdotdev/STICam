@@ -88,6 +88,26 @@ resolved release runtime. Current transitive license groups are:
 
 JUnit's EPL-1.0 license applies only to a test dependency that is not packaged in the APK.
 
+## QR preview dependencies (v1.0.3, code 12)
+
+These additions apply to the QR preview, not the original code 11 downloads.
+
+| Component | Version | Purpose | License/source |
+| --- | --- | --- | --- |
+| JourneyApps ZXing Android Embedded | 4.3.0 | Offline QR capture | Apache-2.0 ([JourneyApps and ZXing authors](https://github.com/journeyapps/zxing-android-embedded/tree/v4.3.0)) |
+| ZXing Core | 3.5.3 | Offline QR decoding | Apache-2.0 ([ZXing authors](https://github.com/zxing/zxing/tree/zxing-3.5.3)) |
+| Net.Codecrete.QrCodeGenerator | 2.0.6 | Offline QR generation in STICam Host | MIT ([Manuel Bleichenbacher and Project Nayuki](https://github.com/manuelbl/QrCodeGenerator/tree/v2.0.6)); copyright (c) 2018 Manuel Bleichenbacher, with Project Nayuki attribution |
+
+Full common license texts are supplied in the packages and in
+[`THIRD-PARTY-LICENSES/`](THIRD-PARTY-LICENSES/). The packages include the QR component
+attribution and Android dependency inventory.
+
+| Upstream artifact | SHA-256 |
+| --- | --- |
+| `zxing-android-embedded-4.3.0.aar` | `4AB03353127C34E55CBB80FBC9A34031DECBCFB1EC5E8F991944D2D494621A33` |
+| `core-3.5.3.jar` | `8D8064C1636FDAEF7189DD9055C7D59950A8940A12F2293956446EC3C109FD82` |
+| `net.codecrete.qrcodegenerator.2.0.6.nupkg` | `CC44DC75B53F8F7179FA7F46AF5A4DA9AE697C23B0354BBF0D0FFBE3063B5200` |
+
 ## Windows dependencies
 
 | Component | Version | Purpose | License |
