@@ -47,6 +47,10 @@ Free to use, works offline, and no account required.
 
 </div>
 
+## Video demo
+
+[Watch the STICam product introduction on YouTube](https://www.youtube.com/watch?v=lZqyJ3HHbcg).
+
 ## Screenshots
 
 ### Connection setup
