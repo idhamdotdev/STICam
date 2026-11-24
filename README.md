@@ -41,15 +41,9 @@ Free to use, works offline, and no account required.
 | **Automatic reconnection** | Resume the stream after a temporary interruption. |
 | **Private by design** | No account, subscription, ads, cloud processing, or developer-operated server. MediaPipe metrics are removed in Android v1.0.1; v1.0.0 is disclosed in the Privacy Policy. |
 
-<div align="center">
-
-<img src="media/banner.jpg" width="90%" alt="STICam branding">
-
-</div>
-
 ## Video demo
 
-[Watch the STICam product introduction on YouTube](https://www.youtube.com/watch?v=lZqyJ3HHbcg).
+[![Watch the STICam product demo on YouTube](https://i.ytimg.com/vi/lZqyJ3HHbcg/maxresdefault.jpg)](https://www.youtube.com/watch?v=lZqyJ3HHbcg)
 
 ## Screenshots
 
